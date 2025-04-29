@@ -7,3 +7,4 @@ __pycache__
 local.settings.json
 .env
 functions/shared_code 
+.venv
