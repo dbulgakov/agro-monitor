@@ -52,7 +52,7 @@ def create_function_app(rg, plan, storage_account, app_insights, app_config_stor
             always_on=False, # Consumption plan doesn't support Always On
             app_settings=[
                 azure_native.web.NameValuePairArgs(
-                    name="AzureWebJobsStorage",
+                    name="AZURE_STORAGE_CONNECTION_STRING",
                     value=storage_account.primary_connection_string
                 ),
                 azure_native.web.NameValuePairArgs(

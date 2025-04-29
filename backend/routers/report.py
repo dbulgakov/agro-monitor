@@ -13,7 +13,7 @@ from functions.lib.schemas import ReportData, ErrorResponse, ProgressUpdate, Job
 router = APIRouter(tags=["Report"])
 
 def get_blob_service_client():
-    conn = os.getenv("AzureWebJobsStorage")
+    conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not conn:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage configuration error")
     return BlobServiceClient.from_connection_string(conn)

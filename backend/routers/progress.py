@@ -14,8 +14,8 @@ from functions.lib.schemas import ProgressUpdate, JobStatus, ErrorResponse
 router = APIRouter(tags=["Progress", "SSE"])
 
 async def get_blob_client(job_id: str):
-    conn = os.getenv("AzureWebJobsStorage")
-    container = os.getenv("REPORTS_CONTAINER_NAME")
+    conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    container = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not conn or not container:
         raise HTTPException(status_code=503, detail="Storage configuration error")
     client = BlobServiceClient.from_connection_string(conn)
