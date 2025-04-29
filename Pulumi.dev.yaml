@@ -1,0 +1,4 @@
+config:
+  azure:location: "EastUS"
+  azure:resourceGroupName: "agro-monitor-rg"
+  azure:functionAppPackageUrl: "<FUNCTION_APP_PACKAGE_URL>"
