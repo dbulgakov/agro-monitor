@@ -7,8 +7,8 @@ import azure.functions as func
 from azure.storage.blob.aio import BlobServiceClient
 from azure.core.exceptions import ResourceNotFoundError
 
-# Import schemas from shared code
-from shared_code.schemas import ErrorResponse, ProgressUpdate, JobStatus
+# Revert to relative import for shared code within the functions package
+from ..shared_code.schemas import ErrorResponse, ProgressUpdate, JobStatus
 
 # Environment variable for Azure Storage connection string
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")

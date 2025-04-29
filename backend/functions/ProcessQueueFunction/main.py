@@ -18,11 +18,9 @@ import planetary_computer
 from shapely.geometry import shape, mapping
 import openai
 
-# Import schemas from shared code
-from ..shared_code.schemas import StartAnalysisPayload, ReportData, JobStatus, ErrorResponse
-
-# Import shared code
-from shared_code.helpers import (
+# Revert to relative import for shared code within the functions package
+from ..shared_code.schemas import StartAnalysisPayload, ReportData, JobStatus
+from ..shared_code.helpers import (
     update_job_status,
     upload_image_to_blob,
     upload_report_to_blob,

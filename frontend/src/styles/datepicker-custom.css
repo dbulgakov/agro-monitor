@@ -1,0 +1,24 @@
+/* Custom styles for react-datepicker */
+
+/* Change color of day numbers */
+.react-datepicker__day {
+  color: #6b7280; /* Tailwind's gray-500 */
+}
+
+/* Optional: Adjust color for days outside the current month */
+.react-datepicker__day--outside-month {
+  color: #d1d5db; /* Tailwind's gray-300 */
+}
+
+/* Optional: Keep selected day color distinct */
+.react-datepicker__day--selected,
+.react-datepicker__day--in-selecting-range,
+.react-datepicker__day--in-range {
+  color: white !important; /* Keep text white on colored background */
+}
+
+/* Optional: Keep today's date color distinct if needed */
+.react-datepicker__day--today {
+   /* font-weight: bold; /* Example: Make today bold */
+   /* You might not need to change the color if the background highlight is enough */
+} 

@@ -19,6 +19,7 @@ python-dotenv>=1.0.0 # For local settings
 # Testing Dependencies
 pytest>=7.0.0
 pytest-asyncio>=0.18.0 # For testing async functions
+pytest-mock>=3.6.0 # For mocker fixture
 
 # Note: rasterio and shapely might require system dependencies (GDAL, GEOS).
 # Ensure these are handled in the deployment environment (e.g., Azure Functions custom image or specific worker).

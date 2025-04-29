@@ -6,7 +6,8 @@ import azure.functions as func
 from azure.storage.queue import QueueClient, TextBase64EncodePolicy
 from pydantic import ValidationError
 
-from shared_code.schemas import StartAnalysisPayload, StartAnalysisResponse, ErrorResponse
+# Revert to relative import for shared code within the functions package
+from ..shared_code.schemas import StartAnalysisPayload, StartAnalysisResponse, ErrorResponse
 
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")
 ANALYSIS_QUEUE_NAME = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests")

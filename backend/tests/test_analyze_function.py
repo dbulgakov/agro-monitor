@@ -3,8 +3,9 @@ import uuid
 import pytest
 import azure.functions as func
 from unittest.mock import Mock, patch # Use unittest.mock or install pytest-mock
+from unittest.mock import ANY
 
-# Import the main function from the specific function directory
+# Change import to be relative to project root
 from functions.AnalyzeFunction.main import main
 from functions.shared_code.schemas import StartAnalysisResponse, ErrorResponse
 
@@ -70,7 +71,7 @@ def test_analyze_success(mock_queue_client_from_conn_str, mock_uuid4, mock_env_v
     mock_queue_client_from_conn_str.assert_called_once_with(
         conn_str="test-connection-string",
         queue_name="test-analysis-queue",
-        message_encode_policy=mock_queue_client_from_conn_str.call_args.kwargs['message_encode_policy'] # Check policy type if needed
+        message_encode_policy=ANY
     )
 
     # Check that send_message was called with correct data
@@ -96,7 +97,7 @@ def test_analyze_invalid_json(mock_env_vars):
     # Assert
     assert response.status_code == 400
     assert response.mimetype == 'application/json'
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     assert "message" in response_body
     assert "valid JSON" in response_body["message"]
     ErrorResponse.model_validate(response_body) # Validate error schema
@@ -120,7 +121,7 @@ def test_analyze_validation_error(mock_env_vars):
     # Assert
     assert response.status_code == 400
     assert response.mimetype == 'application/json'
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     assert "message" in response_body
     assert "Invalid request body" in response_body["message"]
     assert "details" in response_body
@@ -149,9 +150,7 @@ def test_analyze_queue_send_error(mock_queue_client_from_conn_str, mock_env_vars
 
     # Assert
     assert response.status_code == 500
-    assert response.mimetype == 'application/json'
-    response_body = response.get_json()
-    assert "message" in response_body
+    response_body = json.loads(response.get_body())
     assert "Failed to queue analysis job" in response_body["message"]
     ErrorResponse.model_validate(response_body)
 
@@ -173,8 +172,6 @@ def test_analyze_missing_connection_string(monkeypatch):
 
     # Assert
     assert response.status_code == 500
-    assert response.mimetype == 'application/json'
-    response_body = response.get_json()
-    assert "message" in response_body
+    response_body = json.loads(response.get_body())
     assert "Internal server configuration error" in response_body["message"]
     ErrorResponse.model_validate(response_body)

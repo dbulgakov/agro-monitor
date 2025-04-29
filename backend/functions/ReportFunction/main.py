@@ -6,8 +6,8 @@ from azure.storage.blob import BlobServiceClient, BlobClient
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
-# Import schemas from shared code
-from shared_code.schemas import ReportData, ErrorResponse, JobStatus
+# Revert to relative import for shared code within the functions package
+from ..shared_code.schemas import ReportData, ErrorResponse, JobStatus
 
 # Environment variable for Azure Storage connection string
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")

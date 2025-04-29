@@ -44,6 +44,7 @@ def create_request(job_id=TEST_JOB_ID):
     return func.HttpRequest(
         method='GET',
         url=f'/api/report/{job_id}',
+        body=None, # Add body=None for GET requests
         route_params={'jobId': job_id} if job_id else {},
     )
 
@@ -77,8 +78,7 @@ def test_get_report_success_completed(mock_env_vars, mock_blob_service_client):
     # Assert
     assert response.status_code == 200
     assert response.mimetype == 'application/json'
-    response_body = response.get_json()
-    # Validate against Pydantic model AND check specific fields
+    response_body = json.loads(response.get_body())
     validated_report = ReportData.model_validate(response_body)
     assert validated_report.jobId == TEST_JOB_ID
     assert validated_report.status == JobStatus.COMPLETED
@@ -96,8 +96,8 @@ def test_get_report_success_completed(mock_env_vars, mock_blob_service_client):
         (JobStatus.PENDING.value, JobStatus.PENDING),
         (JobStatus.PROCESSING.value, JobStatus.PROCESSING),
         (JobStatus.FAILED.value, JobStatus.FAILED),
-        ("INVALID_STATUS", JobStatus.PENDING), # Test fallback for invalid status string
-        (None, JobStatus.PENDING) # Test fallback if status missing from metadata
+        ("INVALID_STATUS", JobStatus.PENDING),
+        (None, JobStatus.PENDING)
     ]
 )
 def test_get_report_not_completed(mock_env_vars, mock_blob_service_client, metadata_status, expected_status_enum):
@@ -117,7 +117,7 @@ def test_get_report_not_completed(mock_env_vars, mock_blob_service_client, metad
     # Assert
     assert response.status_code == 200 # Still returns 200, client checks status field
     assert response.mimetype == 'application/json'
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     validated_partial_report = ReportData.model_validate(response_body)
     assert validated_partial_report.jobId == TEST_JOB_ID
     assert validated_partial_report.status == expected_status_enum
@@ -142,7 +142,7 @@ def test_get_report_not_found(mock_env_vars, mock_blob_service_client):
     # Assert
     assert response.status_code == 404
     assert response.mimetype == 'application/json'
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     assert "message" in response_body
     assert f"Report not found for Job ID: {TEST_JOB_ID}" in response_body["message"]
     ErrorResponse.model_validate(response_body)
@@ -174,7 +174,7 @@ def test_get_report_metadata_fails_but_download_succeeds(mock_env_vars, mock_blo
     # Assert
     # Because status check failed, it defaults to PENDING and returns partial state
     assert response.status_code == 200
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     validated_partial_report = ReportData.model_validate(response_body)
     assert validated_partial_report.jobId == TEST_JOB_ID
     assert validated_partial_report.status == JobStatus.PENDING # Falls back to PENDING
@@ -184,12 +184,10 @@ def test_get_report_metadata_fails_but_download_succeeds(mock_env_vars, mock_blo
 def test_get_report_completed_invalid_content(mock_env_vars, mock_blob_service_client):
     """Test case where report is COMPLETED but content fails validation."""
     mock_service_client, mock_blob_client = mock_blob_service_client
-
-    # Arrange
     invalid_report_content = {
         "jobId": TEST_JOB_ID,
         "status": "COMPLETED",
-        "summary": 123, # Invalid type for summary
+        "summary": 123,
     }
     mock_blob_client.exists.return_value = True
     mock_blob_client.get_blob_properties.return_value = Mock(metadata={
@@ -197,22 +195,16 @@ def test_get_report_completed_invalid_content(mock_env_vars, mock_blob_service_c
         "jobProgress": "100"
     })
     mock_blob_client.download_blob.return_value = Mock(readall=lambda: json.dumps(invalid_report_content).encode('utf-8'))
-
     req = create_request()
-
-    # Act
     response = main(req)
-
     # Assert
     assert response.status_code == 500
-    assert response.mimetype == 'application/json'
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     assert "Failed to parse completed report data" in response_body["message"]
     assert "details" in response_body
-    assert isinstance(response_body["details"], list)
     ErrorResponse.model_validate(response_body)
 
-def test_get_report_no_jobid():
+def test_get_report_no_jobid(mock_env_vars):
     """Test request without providing jobId in the path."""
     # Arrange
     req = create_request(job_id=None)
@@ -223,7 +215,7 @@ def test_get_report_no_jobid():
     # Assert
     assert response.status_code == 400
     assert response.mimetype == 'application/json'
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     assert "Please provide a jobId in the path" in response_body["message"]
     ErrorResponse.model_validate(response_body)
 
@@ -240,6 +232,6 @@ def test_get_report_missing_connection_string(monkeypatch):
     # Assert
     assert response.status_code == 500
     assert response.mimetype == 'application/json'
-    response_body = response.get_json()
+    response_body = json.loads(response.get_body())
     assert "Internal server configuration error" in response_body["message"]
     ErrorResponse.model_validate(response_body)

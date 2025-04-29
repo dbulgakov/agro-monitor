@@ -1,0 +1,113 @@
+// This file is no longer needed as SSE/SWR logic for progress has been removed.
+// You can delete this file or keep it empty. 
+
+import { JobProgress } from './api'; // Import the progress type
+
+// Base URL for SSE endpoint
+const SSE_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // Use same base as API or dedicated one
+
+interface SseCallbacks {
+  onProgress: (data: JobProgress) => void;
+  onError: (error: Error) => void;
+  onComplete: (data: JobProgress) => void;
+}
+
+/**
+ * Establishes an SSE connection for job progress updates.
+ * Returns a function to close the connection.
+ */
+export function subscribeToJobProgress(
+  jobId: string,
+  { onProgress, onError, onComplete }: SseCallbacks
+): () => void {
+  let eventSource: EventSource | null = null;
+  let reconnectTimeout: NodeJS.Timeout | null = null;
+  const url = `${SSE_BASE_URL}/progress/${jobId}`;
+
+  const connect = () => {
+    if (eventSource) {
+        eventSource.close(); // Close existing connection if any
+    }
+    if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+    }
+
+    try {
+      console.log(`SSE: Підключення до ${url}`);
+      eventSource = new EventSource(url); // Assumes EventSource is available in the environment
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data: JobProgress = JSON.parse(event.data);
+          console.log('SSE: Отримано дані', data);
+
+          onProgress(data); // Send progress update
+
+          if (data.isComplete) {
+            console.log('SSE: Отримано повідомлення про завершення прогресу.');
+            onComplete(data); // Signal completion
+            closeConnection(); // Close after completion message
+          } else if (data.error) {
+             console.error('SSE: Отримано повідомлення про помилку', data.error);
+             onError(new Error(data.error));
+             closeConnection(); // Close on error message
+          }
+        } catch (parseError) {
+          console.error('SSE: Помилка розбору даних повідомлення', parseError);
+          onError(parseError instanceof Error ? parseError : new Error('Не вдалося розібрати повідомлення SSE'));
+          closeConnection(); // Close on parse error
+        }
+      };
+
+      eventSource.onerror = (errorEvent) => {
+        console.error('SSE: Помилка з\'єднання', errorEvent);
+        // Don't call onError immediately, attempt reconnection first
+        if (eventSource?.readyState === EventSource.CLOSED) {
+             console.log('SSE: З\'єднання закрито сервером або мережева помилка. Спроба перепідключення...');
+             // Simple backoff strategy (e.g., retry after 5 seconds)
+             if (!reconnectTimeout) {
+                 reconnectTimeout = setTimeout(() => {
+                     console.log('SSE: Перепідключення...');
+                     connect(); // Attempt to reconnect
+                 }, 5000);
+             }
+        } else {
+            // If it's an unrecoverable error, signal it
+            onError(new Error('Помилка SSE з\'єднання'));
+            closeConnection();
+        }
+      };
+
+      eventSource.onopen = () => {
+          console.log(`SSE: З\'єднання відкрито до ${url}`);
+          if (reconnectTimeout) { // Clear reconnect timeout on successful open
+              clearTimeout(reconnectTimeout);
+              reconnectTimeout = null;
+          }
+      };
+
+    } catch (err) {
+      console.error('SSE: Не вдалося створити EventSource', err);
+      onError(err instanceof Error ? err : new Error('Не вдалося створити EventSource'));
+    }
+  };
+
+  const closeConnection = () => {
+    if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+    }
+    if (eventSource) {
+      console.log(`SSE: Закриття з\'єднання до ${url}`);
+      eventSource.close();
+      eventSource = null;
+    }
+  };
+
+  // Initial connection attempt
+  connect();
+
+  // Return the cleanup function
+  return closeConnection;
+} 

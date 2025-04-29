@@ -1,0 +1,402 @@
+openapi: 3.1.0
+info:
+  title: Agro Monitor Backend API
+  version: 1.0.0
+  description: API для получения и анализа данных сельскохозяйственных полей. Включает SSE для отслеживания прогресса задач.
+servers:
+  - url: /api # Используется относительный URL, который будет разрешен фронтендом или прокси
+    description: Локальный или прокси-сервер
+
+paths:
+  /analyze:
+    post:
+      summary: Запустить новый анализ поля
+      operationId: startAnalysis
+      tags:
+        - Analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAnalysisPayload'
+      responses:
+        '200':
+          description: Анализ успешно запущен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartAnalysisResponse'
+        '400':
+          description: Неверные параметры запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /report/{jobId}:
+    get:
+      summary: Получить отчет по ID задачи
+      operationId: getReport
+      tags:
+        - Report
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          description: ID задачи, полученный при запуске анализа
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Успешный ответ с данными отчета
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportData'
+        '404':
+          description: Отчет не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /progress/{jobId}:
+    get:
+      summary: Подписаться на обновления прогресса задачи (SSE)
+      operationId: subscribeProgress
+      tags:
+        - Progress
+        - SSE
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          description: ID задачи для отслеживания прогресса
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Успешная подписка на поток событий. События будут отправляться в формате text/event-stream. Каждое событие (кроме комментариев) будет содержать JSON объект JobProgress в поле 'data'.
+          content:
+            text/event-stream: # Указываем тип контента для SSE
+              schema:
+                # Хотя SSE не имеет строгой схемы в OpenAPI, мы можем указать, что ожидаем
+                # поток событий, где каждое сообщение содержит JobProgress
+                type: string
+                description: |
+                  Поток Server-Sent Events.
+                  Каждое сообщение (event):
+                  ```
+                  data: {"progress": 50, "statusMessage": "Обработка данных...", "isComplete": false, "error": null}
+
+                  ```
+                  Сообщения могут содержать поле `event: <имя_события>` если нужно различать типы событий, но в данном случае используется стандартное `message`.
+                  Поток завершается, когда `isComplete` равно `true` или `error` не равно `null`.
+        '404':
+          description: Задача не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера при инициализации SSE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    GeoJsonFeaturePoint:
+      type: object
+      required:
+        - type
+        - geometry
+        - properties
+      properties:
+        type:
+          type: string
+          enum: [Feature]
+        geometry:
+          type: object
+          required:
+            - type
+            - coordinates
+          properties:
+            type:
+              type: string
+              enum: [Point]
+            coordinates:
+              type: array
+              items:
+                type: number
+              minItems: 2
+              maxItems: 2
+              description: "[longitude, latitude]"
+        properties:
+          type: object
+          additionalProperties: true
+
+    GeoJsonFeaturePolygon:
+      type: object
+      required:
+        - type
+        - geometry
+        - properties
+      properties:
+        type:
+          type: string
+          enum: [Feature]
+        geometry:
+          type: object
+          required:
+            - type
+            - coordinates
+          properties:
+            type:
+              type: string
+              enum: [Polygon]
+            coordinates:
+              type: array
+              items:
+                type: array
+                items:
+                  type: array
+                  items:
+                    type: number
+                  minItems: 2
+                  maxItems: 2
+                minItems: 4 # Минимум 4 точки для полигона (3 вершины + замыкающая)
+              description: "Массив колец координат, первое - внешнее. [[lon1, lat1], [lon2, lat2], ...]"
+        properties:
+          type: object
+          additionalProperties: true
+
+    GeoJsonFeatureCollection:
+      type: object
+      required:
+        - type
+        - features
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/GeoJsonFeaturePoint'
+              - $ref: '#/components/schemas/GeoJsonFeaturePolygon'
+              # Можно добавить другие типы GeoJSON если нужно
+
+    AnalysisParameters:
+      type: object
+      required:
+        - ndvi_threshold
+        - date_range
+        - max_cloud_cover
+        - crop_type
+      properties:
+        ndvi_threshold:
+          type: number
+          format: float
+          description: Порог NDVI для анализа
+          example: 0.3
+        date_range:
+          type: string
+          description: Диапазон дат в формате "YYYY-MM-DD/YYYY-MM-DD"
+          example: "2024-03-01/2024-04-30"
+        max_cloud_cover:
+          type: number
+          format: integer
+          description: Максимальный процент облачности на снимках
+          example: 20
+        crop_type:
+          type: string
+          enum: ["wheat", "corn", "sunflower", "soy"]
+          description: Тип культуры
+          example: "wheat"
+        snapshotDate:
+          type: string
+          format: date
+          description: Дата конкретного снимка для анализа (опционально)
+          example: "2024-04-15"
+
+    StartAnalysisPayload:
+      allOf:
+        - $ref: '#/components/schemas/AnalysisParameters'
+        - type: object
+          required:
+            - area
+            - frequency
+          properties:
+            area:
+              description: GeoJSON Feature (Точка или Полигон), описывающий область анализа
+              oneOf:
+                - $ref: '#/components/schemas/GeoJsonFeaturePoint'
+                - $ref: '#/components/schemas/GeoJsonFeaturePolygon'
+            frequency:
+              type: string
+              enum: ["single", "weekly"]
+              description: Частота анализа
+              example: "single"
+
+    StartAnalysisResponse:
+      type: object
+      required:
+        - jobId
+      properties:
+        jobId:
+          type: string
+          description: Уникальный идентификатор запущенной задачи анализа
+          example: "job_1715074200123"
+
+    ReportData:
+      type: object
+      required:
+        - jobId
+        - status
+        - parameters
+        - selectedArea
+        - summary
+      properties:
+        jobId:
+          type: string
+          description: ID задачи
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+          description: Текущий статус задачи
+        parameters:
+          $ref: '#/components/schemas/AnalysisParameters'
+        selectedArea:
+          description: GeoJSON Feature (Точка или Полигон), отправленный для анализа
+          oneOf:
+            - $ref: '#/components/schemas/GeoJsonFeaturePoint'
+            - $ref: '#/components/schemas/GeoJsonFeaturePolygon'
+        mapCenter:
+          type: array
+          items:
+            type: number
+          minItems: 2
+          maxItems: 2
+          description: "[latitude, longitude] центра карты для отчета"
+          example: [50.45, 30.52]
+        mapZoom:
+          type: number
+          format: integer
+          description: Уровень масштабирования карты для отчета
+          example: 13
+        resultGeoJson:
+          description: GeoJSON FeatureCollection с результатами анализа (например, зоны здоровья)
+          allOf:
+            - $ref: '#/components/schemas/GeoJsonFeatureCollection'
+            - example:
+                type: FeatureCollection
+                features:
+                  - type: Feature
+                    properties: { health: 'good' }
+                    geometry: { type: Polygon, coordinates: [[[30.51, 50.45], [30.52, 50.45], [30.52, 50.46], [30.51, 50.46], [30.51, 50.45]]] }
+        satelliteImages:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                format: url
+                description: URL изображения со спутника
+              date:
+                type: string
+                format: date
+                description: Дата снимка
+              cloudCover:
+                type: number
+                format: integer
+                description: Процент облачности на снимке
+          example:
+            - url: "https://example.com/image1.tif"
+              date: "2024-04-10"
+              cloudCover: 5
+            - url: "https://example.com/image2.tif"
+              date: "2024-04-18"
+              cloudCover: 15
+        summary:
+          type: string
+          description: Текстовое резюме отчета
+        error:
+          type: string
+          description: Сообщение об ошибке, если status FAILED
+        areaSqKm:
+          type: number
+          format: float
+          description: Площадь анализируемой зоны в квадратных километрах
+          example: 1.5
+        snapshotImageUrl:
+          type: string
+          format: url
+          description: URL RGB снимка для отчета
+        ndviImageUrl:
+          type: string
+          format: url
+          description: URL карты NDVI для отчета
+        stressZoneImageUrl:
+          type: string
+          format: url
+          description: URL карты стресс-зон для отчета
+        stressPercentage:
+          type: number
+          format: float
+          description: Процент стрессовых зон от общей площади
+          example: 12.5
+
+    JobProgress:
+      type: object
+      required:
+        - progress
+        - statusMessage
+        - isComplete
+      properties:
+        progress:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: Прогресс выполнения задачи в процентах
+        statusMessage:
+          type: string
+          description: Сообщение о текущем этапе выполнения
+          example: "Анализ NDVI..."
+        isComplete:
+          type: boolean
+          description: Флаг, указывающий на завершение задачи (успешное или с ошибкой)
+        error:
+          type: string
+          nullable: true
+          description: Сообщение об ошибке, если задача завершилась неудачно
+
+    ErrorResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Сообщение об ошибке
+          example: "Отчет с указанным ID не найден"
+        details:
+          type: string
+          description: Дополнительные детали ошибки (опционально) 
