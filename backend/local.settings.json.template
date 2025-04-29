@@ -1,12 +1,23 @@
 {
   "IsEncrypted": false,
   "Values": {
-    "AzureWebJobsStorage": "<Azure Storage Connection String>",
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "COSMOS_ENDPOINT": "<Your Cosmos DB Endpoint>",
-    "COSMOS_KEY": "<Your Cosmos DB Primary Key>",
-    "COSMOS_DATABASE": "AgroMonitorDb",
-    "COSMOS_CONTAINER": "Jobs",
-    "STAC_API_URL": "https://planetarycomputer.microsoft.com/api/stac/v1"
+    "AzureWebJobsStorage": "<Connection string for your Azure Storage Account (used by Functions host)>",
+
+    "// --- Application Specific Settings ---": "",
+    "AZURE_STORAGE_CONNECTION_STRING": "<Connection string for your Azure Storage Account (used by application logic, can be same as AzureWebJobsStorage)>",
+    "REPORTS_CONTAINER_NAME": "reports",
+    "IMAGES_CONTAINER_NAME": "images",
+    "ANALYSIS_QUEUE_NAME": "analysis-requests",
+
+    "OPENAI_API_KEY": "<Your OpenAI API Key>",
+    "OPENAI_ENDPOINT": "<Optional: Your Azure OpenAI Endpoint>",
+    "OPENAI_API_VERSION": "<Optional: Azure OpenAI API Version, e.g., 2023-05-15>",
+    "OPENAI_MODEL": "gpt-4o", // Or your preferred model
+
+    "STAC_API_URL": "https://planetarycomputer.microsoft.com/api/stac/v1",
+
+    "// --- Local Development Specific (Optional) ---": "",
+    "PYTHONASYNCIODEBUG": "1" // Enable asyncio debug mode if needed
   }
 }
