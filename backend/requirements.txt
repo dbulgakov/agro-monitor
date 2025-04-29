@@ -1,32 +1,18 @@
 azure-functions==1.19.0
 fastapi==0.110.0
-azure-functions-fastapi==1.3.0
-# uvicorn[standard] # Removing as Azure Functions provides the server
-pydantic==2.7.1 # For data validation based on OpenAPI schema
-# azure-cosmos # Removed as we switched to Blob Storage for state/reports
-# azure-storage-queue==12.9.0 # Replacing with async version
-azure-storage-queue-aio>=12.1.0b1 # Async version
-# azure-storage-blob==12.19.1 # Replacing with async version
-azure-storage-blob-aio>=12.8.0 # Async version
+pydantic==2.7.1
+azure-storage-queue>=12.9.0
+azure-storage-blob>=12.8.0
 pystac-client==0.7.6
 planetary-computer==1.0.0
-rasterio==1.3.10 # CRITICAL: Requires GDAL system dependency matching the wheel or build env
+rasterio==1.3.10
 numpy==1.26.4
-shapely==2.0.4 # CRITICAL: Requires GEOS system dependency matching the wheel or build env
+shapely==2.0.4
 matplotlib==3.8.4
-Pillow>=9.0.0 # Added for image manipulation
+Pillow>=9.0.0
 openai==1.23.6
-requests==2.31.0 # Potentially used by underlying libs or for testing
-# aiohttp==3.9.5 # Keep commented unless explicitly needed; async SDKs use httpx
-python-dotenv==1.0.1 # For local settings
-
-# Testing Dependencies
+requests==2.31.0
+python-dotenv==1.0.1
 pytest==8.2.0
-pytest-asyncio==0.23.7 # For testing async functions
-pytest-mock==3.12.0 # For mocker fixture
-
-# Note: rasterio and shapely might require system dependencies (GDAL, GEOS).
-# Ensure these are handled in the deployment environment (e.g., Azure Functions custom image or specific worker).
-# The versions pinned here might need adjustment based on the available system libs in Azure Functions Linux environment.
-
-# Add any other specific dependencies identified during development
+pytest-asyncio==0.23.7
+pytest-mock==3.12.0

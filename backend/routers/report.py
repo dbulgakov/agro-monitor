@@ -1,49 +1,62 @@
 import os
 import json
 import logging
-from fastapi import APIRouter, HTTPException
 
-# Adjust imports based on your project structure
-try:
-    from ..utils.azure_storage import get_blob_service_client
-except ImportError:
-    # Fallback for potential different structure or direct run
-    from utils.azure_storage import get_blob_service_client
+from fastapi import APIRouter, Depends, Path, HTTPException, status
+from azure.storage.blob import BlobServiceClient
+from azure.core.exceptions import ResourceNotFoundError
+from pydantic import ValidationError
 
-router = APIRouter()
-logger = logging.getLogger(__name__)
+from functions.lib.helpers.env_helpers import check_environment_variables, get_required_env_vars
+from functions.lib.schemas import ReportData, ErrorResponse, ProgressUpdate, JobStatus
 
-# --- Config --- #
-REPORTS_CONTAINER_NAME = os.getenv("REPORTS_CONTAINER_NAME", "reports")
-PROGRESS_CONTAINER_NAME = os.getenv("PROGRESS_CONTAINER_NAME", "job-status")
+router = APIRouter(tags=["Report"])
 
-@router.get("/{jobId}", tags=["Reports"]) # Path relative to prefix in app.py
-async def get_analysis_report(jobId: str):
-    logger.info(f"Fetching report for job: {jobId}")
+def get_blob_service_client():
+    conn = os.getenv("AzureWebJobsStorage")
+    if not conn:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage configuration error")
+    return BlobServiceClient.from_connection_string(conn)
+
+@router.get(
+    "/{job_id}",
+    response_model=ReportData,
+    operation_id="getReport",
+    responses={
+        200: {"description": "Успешный ответ с данными отчета", "model": ReportData},
+        404: {"description": "Отчет не найден", "model": ErrorResponse},
+        500: {"description": "Внутренняя ошибка сервера", "model": ErrorResponse},
+    },
+)
+def get_report(
+    job_id: str = Path(..., description="ID задачи, полученный при запуске анализа"),
+    _: None = Depends(lambda: check_environment_variables(get_required_env_vars("report"))),
+    client: BlobServiceClient = Depends(get_blob_service_client)
+):
+    container = os.getenv("REPORTS_CONTAINER_NAME")
+    status_blob = client.get_blob_client(container=container, blob=f"{job_id}/status.json")
+    report_blob = client.get_blob_client(container=container, blob=f"{job_id}/report.json")
     try:
-        blob_service_client = await get_blob_service_client()
-        if not blob_service_client:
-            raise HTTPException(status_code=503, detail="Storage service unavailable.")
-
-        async with blob_service_client:
-            container_client = blob_service_client.get_container_client(REPORTS_CONTAINER_NAME)
-            blob_client = container_client.get_blob_client(f"{jobId}_report.json") # Example naming
-
-            if not await blob_client.exists():
-                 # Check progress status first?
-                 progress_container_client = blob_service_client.get_container_client(PROGRESS_CONTAINER_NAME)
-                 progress_blob_client = progress_container_client.get_blob_client(f"{jobId}.json")
-                 if await progress_blob_client.exists():
-                     raise HTTPException(status_code=404, detail=f"Report for job {jobId} not generated yet.")
-                 else:
-                     raise HTTPException(status_code=404, detail=f"Job {jobId} not found.")
-
-            download_stream = await blob_client.download_blob()
-            report_data = json.loads(await download_stream.readall())
-            return report_data # Assumes report is stored as JSON
-
-    except HTTPException as http_exc:
-        raise http_exc # Re-raise specific HTTP exceptions
+        data = status_blob.download_blob().readall()
+        upd = ProgressUpdate.model_validate_json(data)
+        status_val = upd.status
+    except (ResourceNotFoundError, ValidationError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     except Exception as e:
-        logger.error(f"Failed to fetch report for job {jobId}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to retrieve analysis report.") 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+    if status_val != JobStatus.COMPLETED:
+        partial = ReportData(jobId=job_id, status=status_val)
+        code = status.HTTP_202_ACCEPTED if status_val in (JobStatus.PENDING, JobStatus.PROCESSING) else status.HTTP_200_OK
+        raise HTTPException(status_code=code, detail=partial.model_dump(exclude_none=True))
+
+    try:
+        raw = report_blob.download_blob().readall()
+        rpt = ReportData.model_validate_json(raw)
+        return rpt
+    except ResourceNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Completed report not found")
+    except ValidationError as ve:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
