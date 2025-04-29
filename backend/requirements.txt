@@ -1,0 +1,26 @@
+azure-functions
+# fastapi # Removing as Azure Functions uses its own framework
+# uvicorn[standard] # Removing as Azure Functions provides the server
+pydantic>=2.0 # For data validation based on OpenAPI schema
+# azure-cosmos # Removed as we switched to Blob Storage for state/reports
+azure-storage-queue>=12.9.0
+azure-storage-blob>=12.14.1
+pystac-client>=0.7.5
+planetary-computer>=1.0.0
+rasterio>=1.3.9 # Ensure wheel available or system libs (GDAL) installed
+numpy>=1.24.3
+shapely>=2.0.2 # Ensure wheel available or system libs (GEOS) installed
+matplotlib>=3.7.1
+openai>=1.0.0
+requests>=2.31.0 # Potentially used by underlying libs or for testing
+aiohttp>=3.8.5 # Used by azure-storage-blob async client
+python-dotenv>=1.0.0 # For local settings
+
+# Testing Dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.18.0 # For testing async functions
+
+# Note: rasterio and shapely might require system dependencies (GDAL, GEOS).
+# Ensure these are handled in the deployment environment (e.g., Azure Functions custom image or specific worker).
+
+# Add any other specific dependencies identified during development

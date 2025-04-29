@@ -1,0 +1,13 @@
+{
+  "scriptFile": "main.py",
+  "bindings": [
+    {
+      "name": "msg",
+      "type": "queueTrigger",
+      "direction": "in",
+      "queueName": "%ANALYSIS_QUEUE_NAME%",
+      "connection": "AzureWebJobsStorage"
+    }
+    // No output binding needed here, handled by Blob SDK and raising exceptions
+  ]
+} 
