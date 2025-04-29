@@ -28,11 +28,21 @@ from ..shared_code.helpers import (
     generate_openai_recommendations,
     read_band,
     read_rgb,
-    normalize_image
+    normalize_image,
+    check_environment_variables
 )
 from ..shared_code import helpers
 
-# Environment variables
+# Define required variables, but check inside main
+REQUIRED_ENV_VARS = [
+    "AzureWebJobsStorage", 
+    "REPORTS_CONTAINER_NAME", 
+    "IMAGES_CONTAINER_NAME", 
+    "ANALYSIS_QUEUE_NAME",
+    "OPENAI_API_KEY" # Required for this function's core logic
+]
+
+# Get variables - they might be None if not set, check guards against this
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")
 REPORTS_CONTAINER_NAME = os.getenv("REPORTS_CONTAINER_NAME", "reports")
 IMAGES_CONTAINER_NAME = os.getenv("IMAGES_CONTAINER_NAME", "images")
@@ -40,14 +50,25 @@ ANALYSIS_QUEUE_NAME = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
-# Initialize OpenAI client
+# Initialize OpenAI client (can remain at module level, guarded by check in main)
 if OPENAI_API_KEY:
     openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 else:
-    openai_client = None
-    logging.warning("OPENAI_API_KEY is not set. AI recommendations will be disabled.")
+    openai_client = None 
+    # Log warning here or rely on check inside main?
+    # Let check inside main handle critical failure.
+    # logging.warning("OPENAI_API_KEY is not set at module load. AI recommendations might be disabled if not set later.")
 
 def main(msg: func.QueueMessage):
+    # Check environment variables at the beginning of the function execution
+    try:
+        check_environment_variables(REQUIRED_ENV_VARS)
+    except ValueError as config_error:
+        # Log critical error and raise to signal failure to the Functions host
+        logging.critical(f"Configuration error: {config_error}. Function cannot proceed.")
+        # Re-raise the exception to ensure the message goes to the poison queue after retries
+        raise
+
     logging.info(f'Python queue trigger started processing message ID: {msg.id}')
     start_time = time.time()
 

@@ -8,22 +8,45 @@ from pydantic import ValidationError
 
 # Revert to relative import for shared code within the functions package
 from ..shared_code.schemas import StartAnalysisPayload, StartAnalysisResponse, ErrorResponse, JobStatus
-from ..shared_code.helpers import update_job_status
+from ..shared_code.helpers import update_job_status, check_environment_variables
 
+# Define required variables, but check inside main
+REQUIRED_ENV_VARS = [
+    "AzureWebJobsStorage", 
+    "REPORTS_CONTAINER_NAME", 
+    "IMAGES_CONTAINER_NAME", 
+    "ANALYSIS_QUEUE_NAME"
+    # OPENAI_API_KEY is optional, checked where needed
+]
+
+# Get variables - they might be None if not set, check guards against this
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")
-ANALYSIS_QUEUE_NAME = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests")
+ANALYSIS_QUEUE_NAME = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests") # Default used in function.json binding
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed an /analyze request.')
-
-    if not AZURE_STORAGE_CONNECTION_STRING:
-        logging.error("AzureWebJobsStorage connection string is not set.")
+    # Check environment variables at the beginning of the function execution
+    try:
+        check_environment_variables(REQUIRED_ENV_VARS)
+    except ValueError as config_error:
+        logging.critical(f"Configuration error: {config_error}. Function cannot proceed.")
         error_resp = ErrorResponse(message="Internal server configuration error.")
         return func.HttpResponse(
              error_resp.model_dump_json(),
              mimetype="application/json",
-             status_code=500
+             status_code=503 # Service Unavailable due to config
         )
+        
+    logging.info('Python HTTP trigger function processed an /analyze request.')
+
+    # Connection string check is implicitly handled by check_environment_variables
+    # if not AZURE_STORAGE_CONNECTION_STRING:
+    #     logging.error("AzureWebJobsStorage connection string is not set.")
+    #     error_resp = ErrorResponse(message="Internal server configuration error.")
+    #     return func.HttpResponse(
+    #          error_resp.model_dump_json(),
+    #          mimetype="application/json",
+    #          status_code=500
+    #     )
 
     try:
         req_body = req.get_json()

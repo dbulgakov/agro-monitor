@@ -2,9 +2,12 @@ import json
 import asyncio
 import pytest
 import azure.functions as func
-import azure.storage.blob.aio
+# Import the correct classes for spec
+from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient, BlobClient as AsyncBlobClient
 from unittest.mock import Mock, patch, AsyncMock # Import AsyncMock
 from azure.core.exceptions import ResourceNotFoundError
+import pytest_asyncio
+import time
 
 from functions.ProgressFunction.main import main, progress_generator
 from functions.shared_code.schemas import ErrorResponse, ProgressUpdate, JobStatus
@@ -18,45 +21,63 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("REPORTS_CONTAINER_NAME", "test-reports-async")
     monkeypatch.setenv("PROGRESS_CHECK_INTERVAL_SECONDS", "0.01") # Speed up tests
 
-@pytest.fixture
-def mock_async_blob_service_client():
-    """Fixture to mock the async BlobServiceClient and its subordinates."""
-    mock_service_client = AsyncMock(spec=azure.storage.blob.aio.BlobServiceClient)
-    mock_blob_client = AsyncMock(spec=azure.storage.blob.aio.BlobClient)
+@pytest_asyncio.fixture
+async def mock_async_blob_service_client(mocker):
+    """Mocks the async BlobServiceClient and its methods used by the generator."""
+    # Use the imported async classes for spec
+    mock_service_client = AsyncMock(spec=AsyncBlobServiceClient)
+    mock_blob_client = AsyncMock(spec=AsyncBlobClient)
+    mock_downloader = AsyncMock()
 
-    # Configure async context manager for BlobServiceClient
-    mock_service_client.__aenter__.return_value = mock_service_client
-    mock_service_client.__aexit__.return_value = None
+    # Correctly mock the async download process
+    async def mock_readall():
+        # Default content or dynamically set in tests
+        default_status = ProgressUpdate(jobId=TEST_JOB_ID, status=JobStatus.PROCESSING, progress=50, message="Mocked readall", timestamp=time.time())
+        return json.dumps(default_status.model_dump()).encode('utf-8')
+    mock_downloader.readall = mock_readall # Assign the async function directly
+
+    async def mock_download_blob(**kwargs):
+        return mock_downloader
+    mock_blob_client.download_blob = mock_download_blob
+
+    async def mock_exists():
+        # Default to True, can be overridden in tests
+        return True
+    mock_blob_client.exists = mock_exists
+
     mock_service_client.get_blob_client.return_value = mock_blob_client
+    
+    # Patch 'azure.storage.blob.aio.BlobServiceClient.from_connection_string'
+    # Needs to be async if used with 'async with'
+    mock_from_conn_str = AsyncMock(return_value=mock_service_client)
 
-    # Default behavior (can be overridden)
-    mock_blob_client.get_blob_properties = AsyncMock()
-
-    # Patch the constructor
-    with patch('functions.ProgressFunction.main.BlobServiceClient.from_connection_string') as mock_constructor:
-        mock_constructor.return_value = mock_service_client
-        yield mock_service_client, mock_blob_client
+    with patch('azure.storage.blob.BlobServiceClient.from_connection_string', return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_service_client), __aexit__=AsyncMock(return_value=None))) as mock_fcs:
+        yield mock_service_client, mock_blob_client, mock_downloader
 
 # --- Helper to create HttpRequest ---
 def create_request(job_id=TEST_JOB_ID):
+    route_params = {"jobId": job_id} if job_id else {}
     return func.HttpRequest(
         method='GET',
-        url=f'/api/progress/{job_id}',
-        body=None,
-        route_params={'jobId': job_id} if job_id else {},
+        url=f'/api/progress/{job_id}' if job_id else '/api/progress',
+        route_params=route_params,
+        body=None
     )
 
 # --- Helper to collect SSE events from generator ---
-async def collect_sse_events(generator, max_events=5):
+async def collect_sse_events(generator, max_events=5, timeout=5):
     events = []
+    start_time = time.time()
     try:
         async for event in generator:
             events.append(event)
             if len(events) >= max_events:
                 break
+            if time.time() - start_time > timeout:
+                print(f"SSE collection timed out after {timeout}s")
+                break
     except Exception as e:
-        print(f"Exception during SSE collection: {e}") # For debugging test failures
-        # Depending on test, might re-raise or just return collected events
+        print(f"Error during SSE collection: {e}")
     return events
 
 # --- Test Cases ---
@@ -64,127 +85,156 @@ async def collect_sse_events(generator, max_events=5):
 @pytest.mark.asyncio
 async def test_progress_generator_flow(mock_env_vars, mock_async_blob_service_client):
     """Test the normal flow: PENDING -> PROCESSING -> COMPLETED."""
-    mock_service_client, mock_blob_client = mock_async_blob_service_client
+    mock_service_client, mock_blob_client, mock_downloader = mock_async_blob_service_client
 
-    # Arrange: Simulate blob properties changing over time
-    async def mock_get_properties(*args, **kwargs):
-        call_count = mock_blob_client.get_blob_properties.call_count
-        if call_count == 1:
-            # Simulate blob not found initially
-            raise ResourceNotFoundError("Blob not found")
-        elif call_count == 2:
-            # Simulate PROCESSING
-            return Mock(metadata={
-                "jobStatus": JobStatus.PROCESSING.value,
-                "jobProgress": "50",
-                "jobMessage": "Working..."
-            })
-        elif call_count == 3:
-            # Simulate COMPLETED
-            return Mock(metadata={
-                "jobStatus": JobStatus.COMPLETED.value,
-                "jobProgress": "100"
-            })
+    # Arrange: Simulate blob content changing over time
+    call_count_exists = 0
+    call_count_download = 0
+
+    async def mock_exists_side_effect():
+        nonlocal call_count_exists
+        call_count_exists += 1
+        if call_count_exists == 1:
+            return False # Not found initially
+        return True
+    mock_blob_client.exists = mock_exists_side_effect
+
+    async def mock_readall_side_effect():
+        nonlocal call_count_download
+        call_count_download += 1
+        if call_count_download == 1:
+            # First real check after exists returns True
+            status = ProgressUpdate(jobId=TEST_JOB_ID, status=JobStatus.PROCESSING, progress=50, message="Working...", timestamp=time.time()).model_dump()
+        elif call_count_download == 2:
+             # Second check
+            status = ProgressUpdate(jobId=TEST_JOB_ID, status=JobStatus.COMPLETED, progress=100, timestamp=time.time()).model_dump()
         else:
-            # Keep returning completed to allow loop termination
-            return Mock(metadata={
-                "jobStatus": JobStatus.COMPLETED.value,
-                "jobProgress": "100"
-            })
-
-    mock_blob_client.get_blob_properties.side_effect = mock_get_properties
+            # Keep returning completed
+            status = ProgressUpdate(jobId=TEST_JOB_ID, status=JobStatus.COMPLETED, progress=100, timestamp=time.time()).model_dump()
+        return json.dumps(status).encode('utf-8')
+    mock_downloader.readall = mock_readall_side_effect # Assign the async side effect
 
     # Act
     generator = progress_generator(TEST_JOB_ID)
-    # Collect 3 events: PENDING (progress), PROCESSING (progress), COMPLETED (complete)
+    # Expect 3 events: Initial PENDING (progress), PROCESSING (progress), COMPLETED (complete)
     events = await collect_sse_events(generator, max_events=3)
 
     # Assert
     assert len(events) == 3
-
-    # Check PENDING event (event 0)
-    assert "event: progress" in events[0]
-    data0 = json.loads(events[0].split("data: ")[1])
-    ProgressUpdate.model_validate(data0)
-    assert data0["status"] == JobStatus.PENDING.value
-    assert data0["progress"] == 0
-
-    # Check PROCESSING event (event 1)
-    assert "event: progress" in events[1]
-    data1 = json.loads(events[1].split("data: ")[1])
-    ProgressUpdate.model_validate(data1)
-    assert data1["status"] == JobStatus.PROCESSING.value
-    assert data1["progress"] == 50
-    assert data1["message"] == "Working..."
-
-    # Check final COMPLETED event (sent as event: complete - event 2)
-    assert "event: complete" in events[2]
-    data2 = json.loads(events[2].split("data: ")[1])
-    ProgressUpdate.model_validate(data2)
-    assert data2["status"] == JobStatus.COMPLETED.value
-    assert data2["progress"] == 100
-
-    # Assert the underlying mock was called enough times
-    assert mock_blob_client.get_blob_properties.call_count >= 3
+    # Check event types and data
+    event1 = json.loads(events[0].split('data: ')[1].strip())
+    event2 = json.loads(events[1].split('data: ')[1].strip())
+    event3 = json.loads(events[2].split('data: ')[1].strip())
+    
+    assert events[0].startswith('event: progress')
+    assert event1['status'] == JobStatus.PENDING.value
+    
+    assert events[1].startswith('event: progress')
+    assert event2['status'] == JobStatus.PROCESSING.value
+    assert event2['progress'] == 50
+    
+    assert events[2].startswith('event: complete')
+    assert event3['status'] == JobStatus.COMPLETED.value
+    assert event3['progress'] == 100
 
 @pytest.mark.asyncio
 async def test_progress_generator_failed(mock_env_vars, mock_async_blob_service_client):
     """Test the flow ending in FAILED status."""
-    mock_service_client, mock_blob_client = mock_async_blob_service_client
+    mock_service_client, mock_blob_client, mock_downloader = mock_async_blob_service_client
 
-    # Arrange: Simulate blob properties changing to FAILED
-    async def mock_get_properties(*args, **kwargs):
-        call_count = mock_blob_client.get_blob_properties.call_count
-        if call_count == 1: raise ResourceNotFoundError()
-        elif call_count == 2: return Mock(metadata={"jobStatus": JobStatus.PROCESSING.value, "jobProgress": "30"})
-        else: return Mock(metadata={"jobStatus": JobStatus.FAILED.value, "jobProgress": "-1", "jobMessage": "Error occurred"})
-    mock_blob_client.get_blob_properties.side_effect = mock_get_properties
+    # Arrange: Simulate blob content changing to FAILED
+    call_count_exists = 0
+    call_count_download = 0
+    async def mock_exists_side_effect():
+        nonlocal call_count_exists
+        call_count_exists += 1
+        return call_count_exists > 1 # Not found on first check
+    mock_blob_client.exists = mock_exists_side_effect
+
+    async def mock_readall_side_effect():
+        nonlocal call_count_download
+        call_count_download += 1
+        if call_count_download == 1:
+            status = ProgressUpdate(jobId=TEST_JOB_ID, status=JobStatus.PROCESSING, progress=30, timestamp=time.time()).model_dump()
+        else:
+            status = ProgressUpdate(jobId=TEST_JOB_ID, status=JobStatus.FAILED, progress=-1, message="Error occurred", timestamp=time.time()).model_dump()
+        return json.dumps(status).encode('utf-8')
+    mock_downloader.readall = mock_readall_side_effect
 
     # Act
     generator = progress_generator(TEST_JOB_ID)
+    # Expect 3 events: Initial PENDING (progress), PROCESSING (progress), FAILED (complete)
     events = await collect_sse_events(generator, max_events=3)
 
     # Assert
     assert len(events) == 3
-    assert "event: progress" in events[0] and JobStatus.PENDING.value in events[0]
-    assert "event: progress" in events[1] and JobStatus.PROCESSING.value in events[1]
-    assert "event: complete" in events[2] # Terminal event is 'complete'
-    data2 = json.loads(events[2].split("data: ")[1])
-    ProgressUpdate.model_validate(data2)
-    assert data2["status"] == JobStatus.FAILED.value
-    assert data2["message"] == "Error occurred"
+    event1 = json.loads(events[0].split('data: ')[1].strip())
+    event2 = json.loads(events[1].split('data: ')[1].strip())
+    event3 = json.loads(events[2].split('data: ')[1].strip())
+
+    assert events[0].startswith('event: progress')
+    assert event1['status'] == JobStatus.PENDING.value
+
+    assert events[1].startswith('event: progress')
+    assert event2['status'] == JobStatus.PROCESSING.value
+    assert event2['progress'] == 30
+
+    assert events[2].startswith('event: complete')
+    assert event3['status'] == JobStatus.FAILED.value
+    assert event3['message'] == "Error occurred"
 
 @pytest.mark.asyncio
 async def test_progress_generator_check_error(mock_env_vars, mock_async_blob_service_client):
-    """Test error during blob property check."""
-    mock_service_client, mock_blob_client = mock_async_blob_service_client
+    """Test error during blob download/read after initial PENDING."""
+    mock_service_client, mock_blob_client, mock_downloader = mock_async_blob_service_client
 
     # Arrange: Simulate blob check failing after initial PENDING
-    async def mock_get_properties(*args, **kwargs):
-        if mock_blob_client.get_blob_properties.call_count == 1:
-            raise ResourceNotFoundError()
+    call_count_exists = 0
+    async def mock_exists_side_effect():
+        nonlocal call_count_exists
+        call_count_exists += 1
+        if call_count_exists == 1:
+             return False # Not found first
+        elif call_count_exists == 2:
+             return True # Found second time
         else:
-            raise ConnectionError("Blob storage connection failed")
-    mock_blob_client.get_blob_properties.side_effect = mock_get_properties
+            # Simulate error on subsequent check
+             raise ConnectionError("Blob storage connection failed") 
+    mock_blob_client.exists = mock_exists_side_effect
+
+    # Make download work the first time it's called
+    async def mock_readall_side_effect():
+         status = ProgressUpdate(jobId=TEST_JOB_ID, status=JobStatus.PROCESSING, progress=10, timestamp=time.time()).model_dump()
+         return json.dumps(status).encode('utf-8')
+    mock_downloader.readall = mock_readall_side_effect
 
     # Act
     generator = progress_generator(TEST_JOB_ID)
-    events = await collect_sse_events(generator, max_events=2)
+    # Expect 3 events: Initial PENDING, PROCESSING, then Error
+    events = await collect_sse_events(generator, max_events=3)
 
     # Assert
-    assert len(events) == 2
-    assert "event: progress" in events[0] # Initial PENDING
-    assert "event: error" in events[1]
-    data1 = json.loads(events[1].split("data: ")[1])
-    ErrorResponse.model_validate(data1)
-    assert "Error checking job progress" in data1["message"]
+    assert len(events) == 3 
+    event1 = json.loads(events[0].split('data: ')[1].strip())
+    event2 = json.loads(events[1].split('data: ')[1].strip())
+    event3 = json.loads(events[2].split('data: ')[1].strip())
+
+    assert events[0].startswith('event: progress')
+    assert event1['status'] == JobStatus.PENDING.value
+    
+    assert events[1].startswith('event: progress')
+    assert event2['status'] == JobStatus.PROCESSING.value
+
+    assert events[2].startswith('event: error')
+    assert "Error streaming job progress" in event3['message']
+    assert "ConnectionError" in event3['message']
 
 @pytest.mark.asyncio
 @patch('functions.ProgressFunction.main.func.HttpResponse') # Mock HttpResponse
 @patch('functions.ProgressFunction.main.progress_generator') # Mock generator too
 async def test_progress_main_success(mock_progress_generator, mock_http_response, mock_env_vars, mock_async_blob_service_client):
     """Test the main HTTP handler function initiates SSE stream correctly."""
-    mock_service_client, mock_blob_client = mock_async_blob_service_client
+    mock_service_client, mock_blob_client, mock_downloader = mock_async_blob_service_client
     req = create_request()
     # mock_progress_generator is already mocked by the decorator
 

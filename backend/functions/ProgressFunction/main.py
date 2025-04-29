@@ -5,98 +5,186 @@ import asyncio
 import logging
 
 import azure.functions as func
-from azure.storage.blob.aio import BlobServiceClient
+from azure.storage.blob import BlobServiceClient
 from azure.core.exceptions import ResourceNotFoundError
 
 from ..shared_code.schemas import ProgressUpdate, ErrorResponse, JobStatus
+from ..shared_code.helpers import check_environment_variables
 
-# Environment
+# Required env vars
+REQUIRED_ENV_VARS = [
+    "AzureWebJobsStorage",
+    "REPORTS_CONTAINER_NAME"
+]
+
+# Config from environment
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")
 REPORTS_CONTAINER_NAME = os.getenv("REPORTS_CONTAINER_NAME", "reports")
 PROGRESS_CHECK_INTERVAL_SECONDS = float(
-    os.getenv("PROGRESS_CHECK_INTERVAL_SECONDS", "1")
+    os.getenv("PROGRESS_CHECK_INTERVAL_SECONDS", "2.0")
 )
 
-async def progress_generator(job_id: str):
-    """Async generator yielding Server-Sent Events for job progress."""
-    # 1) Initial PENDING event
-    pending = ProgressUpdate(
-        jobId=job_id,
-        status=JobStatus.PENDING,
-        progress=0,
-        timestamp=time.time()
-    ).model_dump_json()
-    yield f"event: progress\ndata: {pending}\n\n"
-
-    # 2) Poll blob metadata for updates
+# Pre-init sync client (main uses async)
+_blob_service_client = None
+if AZURE_STORAGE_CONNECTION_STRING:
     try:
+        _blob_service_client = BlobServiceClient.from_connection_string(
+            AZURE_STORAGE_CONNECTION_STRING
+        )
+    except Exception as e:
+        logging.error(f"Failed to init BlobServiceClient at module load: {e}")
+        _blob_service_client = None
+
+
+async def progress_generator(job_id: str):
+    """Async generator yielding SSE progress events by polling status.json."""
+    log = logging.LoggerAdapter(logging.getLogger(__name__), {"job_id": job_id})
+    log.info("Starting SSE progress stream.")
+
+    status_blob_path = f"{job_id}/status.json"
+    last_payload_str = None
+    first_emit = False
+
+    try:
+        # Use async client inside generator
         async with BlobServiceClient.from_connection_string(
             AZURE_STORAGE_CONNECTION_STRING
-        ) as service_client:
-            blob_client = service_client.get_blob_client(
+        ) as async_service:
+            blob_client = async_service.get_blob_client(
                 container=REPORTS_CONTAINER_NAME,
-                blob=f"{job_id}/progress"
+                blob=status_blob_path
             )
 
             while True:
-                try:
-                    props = await blob_client.get_blob_properties()
-                    md = props.metadata or {}
-                    status = md.get("jobStatus", JobStatus.PENDING.value)
-                    progress = int(md.get("jobProgress", 0))
-                    message = md.get("jobMessage")
+                payload = None
+                status_value = JobStatus.PENDING.value
 
-                    update = {
+                try:
+                    if await blob_client.exists():
+                        downloader = await blob_client.download_blob()
+                        raw = await downloader.readall()
+                        data = json.loads(raw)
+
+                        # Validate via Pydantic
+                        validated = ProgressUpdate.model_validate(data).model_dump()
+                        status_value = validated.get("status", JobStatus.PENDING.value)
+                        payload = validated
+                        log.debug(f"Read status={status_value}, progress={validated.get('progress')}")
+                    else:
+                        # Blob not yet there → still pending
+                        payload = {
+                            "jobId": job_id,
+                            "status": JobStatus.PENDING.value,
+                            "progress": 0,
+                            "timestamp": time.time()
+                        }
+                        log.debug("No status blob yet, emitting initial PENDING if not already.")
+
+                except json.JSONDecodeError as je:
+                    log.error(f"JSON decode error for {status_blob_path}: {je}")
+                    fail = {
                         "jobId": job_id,
-                        "status": status,
-                        "progress": progress,
+                        "status": JobStatus.FAILED.value,
+                        "progress": -1,
+                        "message": "Error reading status blob",
                         "timestamp": time.time()
                     }
-                    if message:
-                        update["message"] = message
+                    yield f"event: complete\ndata: {json.dumps(fail)}\n\n"
+                    log.info("Stream closed due to JSON decode failure.")
+                    return
 
-                    # Terminal: COMPLETED → one single "complete" event
-                    if status == JobStatus.COMPLETED.value:
-                        yield f"event: complete\ndata: {json.dumps(update)}\n\n"
+                except Exception as ex:
+                    log.error(f"Error checking progress blob {status_blob_path}: {ex}", exc_info=True)
+                    # Emit an error event and terminate
+                    err_msg = f"Error streaming job progress: {type(ex).__name__}: {ex}"
+                    error_payload = ProgressUpdate(
+                        jobId=job_id,
+                        status=JobStatus.FAILED,
+                        progress=-1,
+                        message=err_msg,
+                        timestamp=time.time()
+                    ).model_dump()
+                    yield f"event: error\ndata: {json.dumps(error_payload)}\n\n"
+                    log.info("Error event emitted, closing SSE stream.")
+                    return
+
+                # Only emit on first pass or when payload changes
+                payload_str = json.dumps(payload)
+                if not first_emit or payload_str != last_payload_str:
+                    event_type = "progress"
+                    if payload["status"] in (
+                        JobStatus.COMPLETED.value,
+                        JobStatus.FAILED.value
+                    ):
+                        event_type = "complete"
+
+                    yield f"event: {event_type}\ndata: {payload_str}\n\n"
+                    log.info(f"Sent SSE update: event={event_type}, status={payload['status']}")
+                    last_payload_str = payload_str
+                    first_emit = True
+
+                    # If we're done, break
+                    if event_type == "complete":
+                        log.info("Job finished, closing SSE stream.")
                         return
-
-                    # Terminal: FAILED → one single "complete" event carrying failure
-                    if status == JobStatus.FAILED.value:
-                        yield f"event: complete\ndata: {json.dumps(update)}\n\n"
-                        return
-
-                    # Intermediate (PROCESSING, etc.)
-                    yield f"event: progress\ndata: {json.dumps(update)}\n\n"
-
-                except ResourceNotFoundError:
-                    # Not yet written → still PENDING, just wait
-                    pass
 
                 await asyncio.sleep(PROGRESS_CHECK_INTERVAL_SECONDS)
 
-    except Exception as ex:
-        logging.exception(f"Error in progress_generator for job {job_id}")
-        err = ErrorResponse(message=f"Error checking job progress: {ex}")
+    except Exception as setup_ex:
+        # Failures during client setup
+        log = logging.LoggerAdapter(logging.getLogger(__name__), {"job_id": job_id})
+        log.error(f"Unhandled init error in progress_generator: {setup_ex}", exc_info=True)
+        err = ErrorResponse(
+            message=f"Error streaming job progress: {type(setup_ex).__name__}: {setup_ex}"
+        )
         yield f"event: error\ndata: {err.model_dump_json()}\n\n"
-        return
+        # no explicit return needed; generator will exit
+
 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
-    job_id = req.route_params.get("jobId")
-    if not job_id:
-        err = ErrorResponse(message="Please provide a jobId in the path")
-        # Provide the JSON both positionally and by keyword so both tests pick it up:
+    # Validate env
+    try:
+        check_environment_variables(REQUIRED_ENV_VARS)
+    except ValueError as ve:
+        logging.critical(f"Config error: {ve}")
+        err = ErrorResponse(message="Internal server configuration error.")
         return func.HttpResponse(
             err.model_dump_json(),
-            body=err.model_dump_json(),
+            status_code=503,
+            mimetype="application/json"
+        )
+
+    job_id = req.route_params.get("jobId")
+    log = logging.LoggerAdapter(logging.getLogger(__name__), {"job_id": job_id or "NO_JOB_ID"})
+    if not job_id:
+        log.error("Missing jobId path parameter.")
+        err = ErrorResponse(message="Please provide a jobId in the path")
+        return func.HttpResponse(
+            err.model_dump_json(),
             status_code=400,
             mimetype="application/json"
         )
 
-    gen = progress_generator(job_id)
+    log.info("Accepting SSE /progress connection")
+
+    if not _blob_service_client:
+        log.error("BlobServiceClient unavailable; cannot stream progress.")
+        err = ErrorResponse(message="Server configuration error preventing status updates.")
+        return func.HttpResponse(
+            err.model_dump_json(),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+    # Return the SSE stream
+    event_stream = progress_generator(job_id)
     return func.HttpResponse(
-        gen,
-        body=gen,
+        body=event_stream,
         status_code=200,
         mimetype="text/event-stream",
-        headers={"Content-Type": "text/event-stream"}
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
     )

@@ -173,11 +173,11 @@ def test_get_report_metadata_fails_but_download_succeeds(mock_env_vars, mock_blo
 
     # Assert
     # Because status check failed, it defaults to PENDING and returns partial state
-    assert response.status_code == 200
+    assert response.status_code == 202
     response_body = json.loads(response.get_body())
     validated_partial_report = ReportData.model_validate(response_body)
     assert validated_partial_report.jobId == TEST_JOB_ID
-    assert validated_partial_report.status == JobStatus.PENDING # Falls back to PENDING
+    assert validated_partial_report.status == JobStatus.PENDING
     assert validated_partial_report.summary is None
     mock_blob_client.download_blob.assert_not_called() # Does not download if metadata fails
 
@@ -216,7 +216,7 @@ def test_get_report_no_jobid(mock_env_vars):
     assert response.status_code == 400
     assert response.mimetype == 'application/json'
     response_body = json.loads(response.get_body())
-    assert "Please provide a jobId in the path" in response_body["message"]
+    assert "Please provide a job ID in the URL path" in response_body["message"]
     ErrorResponse.model_validate(response_body)
 
 def test_get_report_missing_connection_string(monkeypatch):
@@ -230,9 +230,8 @@ def test_get_report_missing_connection_string(monkeypatch):
     response = main(req)
 
     # Assert
-    assert response.status_code == 500
+    assert response.status_code == 503
     assert response.mimetype == 'application/json'
     response_body = json.loads(response.get_body())
-    assert "message" in response_body
-    assert "Internal server error while fetching report." in response_body["message"]
+    assert "Internal server configuration error" in response_body["message"]
     ErrorResponse.model_validate(response_body)

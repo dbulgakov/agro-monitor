@@ -3,6 +3,7 @@
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsStorage": "<Connection string for your Azure Storage Account (used by Functions host)>",
+    "APPINSIGHTS_INSTRUMENTATIONKEY": "<YOUR_APP_INSIGHTS_INSTRUMENTATION_KEY>",
 
     "// --- Application Specific Settings ---": "",
     "AZURE_STORAGE_CONNECTION_STRING": "<Connection string for your Azure Storage Account (used by application logic, can be same as AzureWebJobsStorage)>",
@@ -18,6 +19,12 @@
     "STAC_API_URL": "https://planetarycomputer.microsoft.com/api/stac/v1",
 
     "// --- Local Development Specific (Optional) ---": "",
-    "PYTHONASYNCIODEBUG": "1" // Enable asyncio debug mode if needed
+    "PYTHONASYNCIODEBUG": "1", // Enable asyncio debug mode if needed
+    "PYTHON_ENABLE_DEBUG_LOGGING": "1", // Enable verbose logging from the Python worker
+    "CORS_ALLOWED_ORIGINS": "*",
+    "CORS_SUPPORT_CREDENTIALS": "false"
+  },
+  "Host": {
+    "CORS": "*" // Basic CORS setting for func host, better controlled via environment variables above
   }
 }

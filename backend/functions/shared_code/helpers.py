@@ -7,6 +7,9 @@ import rasterio
 import openai
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.core.exceptions import ResourceNotFoundError
+from datetime import datetime
+from typing import List, Tuple, Optional
+import time
 
 # Use relative import for schemas within the same package level
 from .schemas import ReportData, JobStatus
@@ -38,7 +41,7 @@ else:
     logging.warning("OPENAI_API_KEY is not set. AI recommendations will be disabled.")
 
 # --- Job Status & Blob Operations --- #
-def update_job_status(job_id: str, status: JobStatus, progress: int, message: str = None):
+def update_job_status(job_id: str, status: JobStatus, progress: int, message: Optional[str] = None):
     """Updates the job status, progress, and optional message stored in blob metadata."""
     log_adapter = logging.LoggerAdapter(logging.getLogger(__name__), {'job_id': job_id})
     log_adapter.info(f"Updating status: Status={status.value}, Progress={progress}%, Message='{message}'")
@@ -217,4 +220,15 @@ def normalize_image(job_id: str, img: np.ndarray, lower: float = 2, upper: float
     img_normalized = (img - vmin) / (vmax - vmin)
     result = np.clip(img_normalized, 0, 1)
     log_adapter.debug(f"Finished normalizing image.")
-    return result 
+    return result
+
+# --- Environment Variable Check --- #
+def check_environment_variables(required_vars: List[str]):
+    """Checks if required environment variables are set and logs/raises error if not."""
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        error_message = f"Missing required environment variables: {', '.join(missing_vars)}"
+        logging.critical(error_message)
+        # Raising a ConfigurationError or similar is often better to halt execution
+        raise ValueError(error_message)
+    logging.info("Required environment variables check passed.") 

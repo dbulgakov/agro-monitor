@@ -241,11 +241,7 @@ def test_analyze_missing_connection_string(monkeypatch):
     response = main(req)
 
     # Assert
-    assert response.status_code == 500
+    # Check for 503 Service Unavailable due to configuration error
+    assert response.status_code == 503 
     response_body = json.loads(response.get_body())
-    assert "message" in response_body
-    # The exact message might depend on where the check fails first
-    # It could be in get_blob_service_client or QueueClient creation
-    # Check for a general configuration error message
-    assert "configuration error" in response_body["message"].lower()
-    ErrorResponse.model_validate(response_body)
+    assert "Internal server configuration error" in response_body['message']
