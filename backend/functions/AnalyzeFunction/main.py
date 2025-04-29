@@ -7,7 +7,8 @@ from azure.storage.queue import QueueClient, TextBase64EncodePolicy
 from pydantic import ValidationError
 
 # Revert to relative import for shared code within the functions package
-from ..shared_code.schemas import StartAnalysisPayload, StartAnalysisResponse, ErrorResponse
+from ..shared_code.schemas import StartAnalysisPayload, StartAnalysisResponse, ErrorResponse, JobStatus
+from ..shared_code.helpers import update_job_status
 
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")
 ANALYSIS_QUEUE_NAME = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests")
@@ -43,6 +44,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         job_id = str(uuid.uuid4())
         logging.info(f"Generated Job ID: {job_id}")
 
+        # Create initial PENDING status blob
+        try:
+            update_job_status(job_id, JobStatus.PENDING, 0, "Analysis request received and queued.")
+            logging.info(f"Initial PENDING status set for Job ID {job_id}")
+        except Exception as status_e:
+             # Log error but proceed to queueing if possible? Or fail here?
+             # Let's fail fast if we can't even set the initial status.
+             logging.error(f"Failed to set initial PENDING status for Job ID {job_id}: {status_e}", exc_info=True)
+             error_resp = ErrorResponse(message="Failed to initialize analysis job status.")
+             return func.HttpResponse(
+                 error_resp.model_dump_json(),
+                 mimetype="application/json",
+                 status_code=500
+             )
+
         queue_message = {
             "jobId": job_id,
             "payload": payload.model_dump()
@@ -60,6 +76,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         except Exception as e:
             logging.error(f"Failed to send message to queue '{ANALYSIS_QUEUE_NAME}' for Job ID {job_id}: {e}", exc_info=True)
+            # Update status to FAILED if queueing fails
+            try:
+                update_job_status(job_id, JobStatus.FAILED, -1, f"Failed to queue job: {type(e).__name__}: {str(e)[:200]}")
+                logging.info(f"Updated status to FAILED for Job ID {job_id} due to queue error.")
+            except Exception as status_fail_e:
+                 logging.error(f"Additionally failed to update status to FAILED for Job ID {job_id}: {status_fail_e}")
+
             error_resp = ErrorResponse(message="Failed to queue analysis job.")
             return func.HttpResponse(
                  error_resp.model_dump_json(),

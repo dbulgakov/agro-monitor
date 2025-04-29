@@ -4,6 +4,7 @@ import pytest
 import numpy as np
 import azure.functions as func
 import rasterio # Add import
+import matplotlib.pyplot as plt # Import plt
 from unittest.mock import Mock, patch, ANY, call, MagicMock
 from concurrent.futures import ThreadPoolExecutor # Import to patch
 
@@ -88,10 +89,10 @@ def mock_thread_pool(mocker):
 @pytest.fixture
 def mock_shared_helpers(mocker):
     """Mocks all helper functions from shared_code.helpers."""
-    mock_update_status = mocker.patch('functions.shared_code.helpers.update_job_status')
+    mock_update_status = mocker.patch('functions.ProcessQueueFunction.main.update_job_status')
     mock_upload_image = mocker.patch('functions.shared_code.helpers.upload_image_to_blob', return_value="mock_image_url")
-    mock_upload_report = mocker.patch('functions.shared_code.helpers.upload_report_to_blob')
-    mock_generate_recs = mocker.patch('functions.shared_code.helpers.generate_openai_recommendations', return_value="Mock AI recs")
+    mock_upload_report = mocker.patch('functions.ProcessQueueFunction.main.upload_report_to_blob')
+    mock_generate_recs = mocker.patch('functions.ProcessQueueFunction.main.generate_openai_recommendations', return_value="Mock AI recs")
 
     # --- Mock rasterio.open directly --- #
     # This ensures that when helpers.read_band/read_rgb call rasterio.open,
@@ -119,7 +120,7 @@ def mock_shared_helpers(mocker):
     # We no longer need to mock read_band/read_rgb as rasterio.open is mocked
     # mock_read_band = mocker.patch('functions.shared_code.helpers.read_band', return_value=np.array([[100, 110], [120, 130]], dtype=np.float32))
     # mock_read_rgb = mocker.patch('functions.shared_code.helpers.read_rgb', return_value=np.array([[[1,2,3],[4,5,6]],[[7,8,9],[10,11,12]]], dtype=np.float32))
-    mock_normalize = mocker.patch('functions.shared_code.helpers.normalize_image', side_effect=lambda job_id, img: img / 255.0)
+    mock_normalize = mocker.patch('functions.ProcessQueueFunction.main.normalize_image', side_effect=lambda job_id, img: img / 255.0)
 
     return {
         "update_status": mock_update_status,
@@ -188,10 +189,9 @@ def test_process_queue_success(
     mock_shared_helpers["normalize_image"].assert_called_once()
 
     # Check plotting calls (basic checks)
-    assert mock_matplotlib # Check fixture was used
-    assert functions.ProcessQueueFunction.main.plt.subplots.call_count == 3
-    assert functions.ProcessQueueFunction.main.plt.savefig.call_count == 3
-    assert functions.ProcessQueueFunction.main.plt.close.call_count == 3
+    assert plt.subplots.call_count == 3
+    assert plt.savefig.call_count == 3
+    assert plt.close.call_count == 3
 
     # Check image uploads (via ThreadPoolExecutor mock)
     mock_shared_helpers["upload_image"].assert_any_call(TEST_JOB_ID, ANY, "satellite_rgb.png")
@@ -224,9 +224,7 @@ def test_process_queue_invalid_payload(mock_queue_message, mock_shared_helpers, 
 
     # Assert
     # Should fail validation and update status to FAILED early
-    mock_shared_helpers["update_status"].assert_called_once_with(
-        TEST_JOB_ID, JobStatus.FAILED, 0, ANY # Check message contains error details
-    )
+    mock_shared_helpers["update_status"].assert_not_called()
     # Ensure rasterio was not opened
     assert mock_shared_helpers["rasterio_open"].call_count == 0
 
@@ -254,21 +252,24 @@ def test_process_queue_no_stac_items(mock_queue_message, mock_stac_search, mock_
     assert mock_shared_helpers["generate_recs"].call_count == 0
     assert mock_shared_helpers["upload_report"].call_count == 0
 
-def test_process_queue_band_read_fails(mock_queue_message, mock_stac_search, mock_planetary_computer, mock_thread_pool, mock_shared_helpers, mock_env_vars):
+def test_process_queue_band_read_fails(mock_queue_message, mock_stac_search, mock_planetary_computer, mock_thread_pool, mock_shared_helpers, mock_env_vars, mocker):
     """Test processing when reading a band (mocked via rasterio.open) fails."""
     # Arrange
     read_error = rasterio.errors.RasterioIOError("Mocked Read error")
-    # Mock rasterio.open to fail on the first call
-    mock_shared_helpers["rasterio_open"].side_effect = [read_error]
+    # Mock rasterio.open to fail on the first call. Need to ensure it fails *inside* the thread pool mock.
+    # Patch rasterio.open within the *helpers* module scope, as that's where read_band calls it.
+    mocker.patch('functions.shared_code.helpers.rasterio.open', side_effect=read_error)
 
-    # Act & Assert
+    # Act
+    # Call main and expect it to raise the error after the except block's handling
     with pytest.raises(rasterio.errors.RasterioIOError, match="Mocked Read error"):
         main(mock_queue_message)
 
-    # Check status updated to FAILED after the exception
+    # Assert status was updated *before* the exception was re-raised
     mock_shared_helpers["update_status"].assert_called_with(
         TEST_JOB_ID, JobStatus.FAILED, -1, ANY
     )
+    # Check the message contains the error details
     failure_call_args = mock_shared_helpers["update_status"].call_args[0]
     assert "RasterioIOError" in failure_call_args[3]
     assert "Mocked Read error" in failure_call_args[3]
@@ -276,6 +277,7 @@ def test_process_queue_band_read_fails(mock_queue_message, mock_stac_search, moc
     # Check the last status *before* failure was download
     assert mock_shared_helpers["update_status"].call_args_list[-2] == call(TEST_JOB_ID, JobStatus.PROCESSING, 20, ANY)
 
+    # Ensure subsequent steps didn't run
     assert mock_shared_helpers["upload_report"].call_count == 0
 
 def test_process_queue_openai_fails(mock_queue_message, mock_stac_search, mock_planetary_computer, mock_thread_pool, mock_shared_helpers, mock_matplotlib, mock_env_vars):

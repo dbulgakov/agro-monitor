@@ -93,6 +93,6 @@ class ErrorResponse(BaseModel):
 class ProgressUpdate(BaseModel):
     jobId: str
     status: JobStatus
-    progress: int = Field(..., ge=0, le=100)
+    progress: int = Field(..., ge=-1, le=100)
     message: Optional[str] = None
     timestamp: float 

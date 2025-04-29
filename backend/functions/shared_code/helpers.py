@@ -208,7 +208,7 @@ def normalize_image(job_id: str, img: np.ndarray, lower: float = 2, upper: float
     if valid_pixels.size == 0:
         log_adapter.warning(f"Attempting to normalize an image with no valid pixels.")
         return np.zeros_like(img)
-    vmin, vmax = np.percentile(valid_pixels, lower), np.percentile(valid_pixels, upper)
+    vmin, vmax = np.percentile(valid_pixels, lower, method='linear'), np.percentile(valid_pixels, upper, method='linear')
     log_adapter.debug(f"Normalization percentiles: vmin={vmin}, vmax={vmax}")
     if vmax - vmin < 1e-6:
         log_adapter.warning(f"Image normalization range too small (vmin={vmin}, vmax={vmax}). Clamping.")

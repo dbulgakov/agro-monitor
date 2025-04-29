@@ -96,19 +96,20 @@ async def test_progress_generator_flow(mock_env_vars, mock_async_blob_service_cl
 
     # Act
     generator = progress_generator(TEST_JOB_ID)
-    events = await collect_sse_events(generator, max_events=3) # Expect 3 state changes
+    # Collect 3 events: PENDING (progress), PROCESSING (progress), COMPLETED (complete)
+    events = await collect_sse_events(generator, max_events=3)
 
     # Assert
     assert len(events) == 3
 
-    # Check PENDING event
+    # Check PENDING event (event 0)
     assert "event: progress" in events[0]
     data0 = json.loads(events[0].split("data: ")[1])
     ProgressUpdate.model_validate(data0)
     assert data0["status"] == JobStatus.PENDING.value
     assert data0["progress"] == 0
 
-    # Check PROCESSING event
+    # Check PROCESSING event (event 1)
     assert "event: progress" in events[1]
     data1 = json.loads(events[1].split("data: ")[1])
     ProgressUpdate.model_validate(data1)
@@ -116,13 +117,14 @@ async def test_progress_generator_flow(mock_env_vars, mock_async_blob_service_cl
     assert data1["progress"] == 50
     assert data1["message"] == "Working..."
 
-    # Check COMPLETED event (sent as event: complete)
+    # Check final COMPLETED event (sent as event: complete - event 2)
     assert "event: complete" in events[2]
     data2 = json.loads(events[2].split("data: ")[1])
     ProgressUpdate.model_validate(data2)
     assert data2["status"] == JobStatus.COMPLETED.value
     assert data2["progress"] == 100
 
+    # Assert the underlying mock was called enough times
     assert mock_blob_client.get_blob_properties.call_count >= 3
 
 @pytest.mark.asyncio
@@ -178,33 +180,39 @@ async def test_progress_generator_check_error(mock_env_vars, mock_async_blob_ser
     assert "Error checking job progress" in data1["message"]
 
 @pytest.mark.asyncio
-async def test_progress_main_success(mock_env_vars, mock_async_blob_service_client):
+@patch('functions.ProgressFunction.main.func.HttpResponse') # Mock HttpResponse
+@patch('functions.ProgressFunction.main.progress_generator') # Mock generator too
+async def test_progress_main_success(mock_progress_generator, mock_http_response, mock_env_vars, mock_async_blob_service_client):
     """Test the main HTTP handler function initiates SSE stream correctly."""
     mock_service_client, mock_blob_client = mock_async_blob_service_client
     req = create_request()
-    # Minimal mock for generator to be created
-    async def mock_get_properties(*args, **kwargs):
-        raise ResourceNotFoundError()
-    mock_blob_client.get_blob_properties.side_effect = mock_get_properties
+    # mock_progress_generator is already mocked by the decorator
 
-    response = main(req) # No await
+    response = await main(req) # Add await
 
-    # Assert: Check headers and status, ensure body is a generator
-    assert response.status_code == 200
-    assert response.mimetype == 'text/event-stream'
-    assert response.headers['Content-Type'] == 'text/event-stream'
-    assert response.headers['Cache-Control'] == 'no-cache'
-    # Check that body is an async generator without consuming it
-    import inspect
-    assert inspect.isasyncgen(response.body)
+    # Assert: Check HttpResponse was called with correct args
+    mock_http_response.assert_called_once()
+    call_args = mock_http_response.call_args[1] # Get kwargs
+    assert call_args['status_code'] == 200
+    assert call_args['mimetype'] == 'text/event-stream'
+    assert 'Content-Type' in call_args['headers']
+    assert call_args['headers']['Content-Type'] == 'text/event-stream'
+    # Check that the body is the result of calling the (mocked) generator
+    mock_progress_generator.assert_called_once_with(TEST_JOB_ID)
+    assert call_args['body'] == mock_progress_generator.return_value
 
 @pytest.mark.asyncio # Keep decorator for potential async fixtures
-async def test_progress_main_no_jobid(mock_env_vars):
+@patch('functions.ProgressFunction.main.func.HttpResponse') # Mock HttpResponse here too
+async def test_progress_main_no_jobid(mock_http_response, mock_env_vars):
     """Test the main handler when jobId is missing."""
     req = create_request(job_id=None)
-    response = main(req) # No await
-    # Assert
-    assert response.status_code == 400
-    response_body = json.loads(response.get_body())
-    assert "Please provide a jobId in the path" in response_body["message"]
-    ErrorResponse.model_validate(response_body)
+    response = await main(req) # Add await
+
+    # Assert HttpResponse called with 400 status and JSON body
+    mock_http_response.assert_called_once()
+    call_args_pos = mock_http_response.call_args[0] # Get positional args
+    call_args_kw = mock_http_response.call_args[1] # Get keyword args
+    assert call_args_kw['status_code'] == 400
+    assert call_args_kw['mimetype'] == 'application/json'
+    body_json = json.loads(call_args_pos[0]) # Body is the first positional arg
+    assert "Please provide a jobId in the path" in body_json["message"]

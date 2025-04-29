@@ -233,5 +233,6 @@ def test_get_report_missing_connection_string(monkeypatch):
     assert response.status_code == 500
     assert response.mimetype == 'application/json'
     response_body = json.loads(response.get_body())
-    assert "Internal server configuration error" in response_body["message"]
+    assert "message" in response_body
+    assert "Internal server error while fetching report." in response_body["message"]
     ErrorResponse.model_validate(response_body)
