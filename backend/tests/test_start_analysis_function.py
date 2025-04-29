@@ -3,13 +3,12 @@ import uuid
 import pytest
 import os
 import azure.functions as func
-from unittest.mock import Mock, patch, ANY, call, AsyncMock, MagicMock
+from unittest.mock import patch, ANY, call, AsyncMock
 import importlib # For reloading modules in tests
 
 # Change import to be relative to project root
 from functions.StartAnalysisFunction.main import main
 from functions.shared_code.schemas import StartAnalysisResponse, ErrorResponse, JobStatus
-from functions.shared_code import helpers
 
 # --- Test Data ---
 VALID_POLYGON_GEOM = {

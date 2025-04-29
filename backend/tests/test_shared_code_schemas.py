@@ -3,10 +3,6 @@ from pydantic import ValidationError
 from functions.shared_code.schemas import (
     StartAnalysisPayload,
     Frequency,
-    GeoJsonPointGeometry,
-    GeoJsonPolygonGeometry,
-    GeoJsonFeaturePoint,
-    GeoJsonFeaturePolygon,
     GeoJsonGeometry,
     GeometryType
 )

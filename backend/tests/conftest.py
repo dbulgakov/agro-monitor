@@ -97,6 +97,6 @@ def mock_queue_client_factory(monkeypatch):
     return mock_queue_client # Return the instance for tests to use as return_value
 
 # Add imports needed for mocks
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, MagicMock
 from azure.storage.queue import QueueClient # Needed for spec
 from azure.storage.blob import BlobServiceClient, BlobClient # Needed for spec 

@@ -1,204 +1,226 @@
 # Agro Monitor Serverless Application
 
 Это серверлес-приложение для мониторинга сельскохозяйственных полей на основе публичных спутниковых данных.
-В проекте используется:
 
-- **Backend**: Azure Functions на Python (развернутый как Docker-контейнер с FastAPI)
+## Архитектура
+
+(Добавьте сюда краткую диаграмму или описание взаимодействия Frontend -> Backend API (FastAPI/Functions) -> Azure Storage (Queues, Blobs) -> Внешние API (STAC, OpenAI) -> Pulumi для деплоя)
+
+## Компоненты
+
+- **Backend**: Azure Functions на Python (развернутый как Docker-контейнер с FastAPI поверх ASGI адаптера)
 - **Frontend**: Next.js React SPA (Static Export)
 - **Infrastructure as Code**: Pulumi (Python)
 - **CI/CD**: (Optional - Add details if implemented, e.g., GitHub Actions)
 
-## Project Structure
+## Структура Проекта
 
 ```
 .
-├── backend/         # Backend: Azure Functions code + FastAPI app + Dockerfile
-├── frontend/        # Frontend: Next.js application
-├── infrastructure/  # Pulumi code for defining Azure resources
-├── __main__.py      # Pulumi entrypoint
-├── requirements.txt # Pulumi Python dependencies
-├── Pulumi.yaml      # Pulumi project definition
-├── Pulumi.dev.yaml  # Pulumi dev stack configuration
-└── README.md        # This file
+├── backend/         # Backend: FastAPI + Azure Functions код + Dockerfile
+│   ├── functions/   # Azure Function триггеры и биндинги
+│   ├── routers/     # FastAPI роутеры API
+│   ├── utils/       # Вспомогательные модули (e.g., Azure Storage client)
+│   ├── tests/       # Тесты для backend
+│   ├── app.py       # Основной FastAPI app
+│   ├── Dockerfile   # Dockerfile для сборки образа
+│   ├── requirements.txt # Зависимости Python для backend
+│   └── .env.example # Пример файла переменных окружения
+├── frontend/        # Frontend: Next.js приложение
+│   ├── src/         # Исходный код Next.js (App Router)
+│   ├── public/      # Статические ассеты
+│   ├── lib/         # Вспомогательные модули (api client, sse client)
+│   ├── tests/       # Тесты для frontend
+│   ├── package.json # Зависимости Node.js
+│   └── next.config.js # Конфигурация Next.js
+├── infrastructure/  # Pulumi код для определения ресурсов Azure
+│   ├── __main__.py  # Основной скрипт Pulumi
+│   └── ... (модули для ресурсов: storage.py, function_app.py, etc.)
+├── venv/            # Виртуальное окружение Python (если используется)
+├── .gitignore       # Файл исключений Git
+├── requirements.txt # Зависимости Python для Pulumi
+├── Pulumi.yaml      # Определение проекта Pulumi
+├── Pulumi.dev.yaml  # Конфигурация стека Pulumi 'dev'
+└── README.md        # Этот файл
 ```
 
 ## Prerequisites
 
-- Python 3.9+ and pip
-- Node.js 18+ and npm (or yarn)
-- Pulumi CLI (`brew install pulumi` or see https://www.pulumi.com/docs/get-started/install/)
-- Azure CLI (`brew install azure-cli` or see https://docs.microsoft.com/cli/azure/install-azure-cli)
-- Docker Desktop or Docker Engine (required for building the backend image locally and by Pulumi)
+- Python 3.9+ и pip
+- Node.js 18+ и npm (или yarn)
+- Pulumi CLI (`brew install pulumi` или https://www.pulumi.com/docs/get-started/install/)
+- Azure CLI (`brew install azure-cli` или https://docs.microsoft.com/cli/azure/install-azure-cli)
+- Docker Desktop или Docker Engine (для локальной сборки и деплоя backend)
 
 ## Setup
 
-1.  **Clone the repository:**
+1.  **Клонировать репозиторий:**
     ```bash
     git clone <repository-url>
     cd agro-monitor
     ```
 
-2.  **Log in to Azure:**
+2.  **Войти в Azure:**
     ```bash
     az login
     az account set --subscription <your-subscription-id>
     ```
 
-3.  **Log in to Pulumi:**
+3.  **Войти в Pulumi:**
     ```bash
-    pulumi login # (Use Azure Blob Storage backend or Pulumi Service)
+    pulumi login # (Использовать Azure Blob Storage backend или Pulumi Service)
     ```
 
-4.  **Install Pulumi Dependencies:**
+4.  **Установить зависимости Pulumi:**
     ```bash
-    # Create a virtual environment (recommended)
+    # Создать и активировать виртуальное окружение (рекомендуется)
     python -m venv venv
-    source venv/bin/activate # On Windows use `venv\Scripts\activate`
+    source venv/bin/activate # В Windows: venv\Scripts\activate
 
+    # Установить зависимости из корневого requirements.txt
     pip install -r requirements.txt
     ```
 
-## Local Development
+## Локальная разработка
 
-### Running the Backend (FastAPI app locally)
+### Запуск Backend (FastAPI локально)
 
-Running the backend locally typically involves running the FastAPI server directly, often using Uvicorn. This requires backend dependencies and setting environment variables similar to `local.settings.json`.
+Для локальной разработки backend запускается напрямую с помощью `uvicorn`.
 
 ```bash
 cd backend
 
-# Install backend dependencies (assuming requirements.txt exists in backend/)
+# Установить зависимости backend (рекомендуется в том же venv)
 pip install -r requirements.txt
 
-# Create/Update local.settings.json (or use .env file + dotenv)
-# Mimic required Azure Function App Settings:
+# Создать файл .env из примера и заполнить его
+cp .env.example .env
+# Отредактируйте .env, указав ваше имя Azure Storage Account
 # AZURE_STORAGE_ACCOUNT_NAME=<your_dev_storage_account_name>
-# ANALYSIS_QUEUE_NAME=analysis-requests
-# REPORTS_CONTAINER_NAME=reports
-# PROGRESS_CONTAINER_NAME=job-status
-# (Ensure Azure credentials are available, e.g., via `az login` for DefaultAzureCredential)
+# Убедитесь, что вы вошли в Azure CLI (`az login`) для DefaultAzureCredential
 
-# Run FastAPI app using Uvicorn
-# Replace 'app:app' with the actual location of your FastAPI instance if needed
+# Запустить FastAPI приложение с помощью Uvicorn
+# Переменные из .env будут загружены автоматически, если установлен python-dotenv
+# (добавьте python-dotenv в backend/requirements.txt, если его нет)
 uvicorn app:app --reload --port 8000
 ```
-*Note: The backend running locally via Uvicorn will be available at `http://localhost:8000`. Ensure your frontend points to this URL during local development.* 
-*Alternatively, you can try running with Azure Functions Core Tools, but ensure your `function.json` is configured for an ASGI handler if using FastAPI.* 
 
-```bash
-# func start # Might require specific configuration for ASGI
-```
+Backend будет доступен по адресу `http://localhost:8000`. Убедитесь, что frontend настроен на этот URL во время локальной разработки.
 
-### Running the Frontend (Next.js dev server)
+### Запуск Frontend (Next.js dev server)
 
 ```bash
 cd frontend
 
-# Install frontend dependencies
-npm install # or yarn install
+# Установить зависимости frontend
+npm install # или yarn install
 
-# Create .env.local (if needed) to point to local backend
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000/" > .env.local
+# Создать .env.local для указания URL локального backend
+# (если не хотите использовать прокси через /api)
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
 
-# Start the Next.js development server
-npm run dev # or yarn dev
+# Запустить сервер разработки Next.js
+npm run dev # или yarn dev
 ```
 
-The frontend will be available at `http://localhost:3000` and will connect to the backend specified by `NEXT_PUBLIC_API_URL` (or the mock API at `/api` if unset).
+Frontend будет доступен по адресу `http://localhost:3000`.
 
-## Testing
+## Тестирование
 
-### Backend Tests (Example: Pytest)
+### Backend Тесты (Pytest)
 
 ```bash
 cd backend
-# Ensure test dependencies are installed (e.g., pytest, httpx)
-pip install pytest httpx
 
-# Run tests (assuming tests are in a 'tests/' directory)
+# Установить зависимости для тестов (если еще не установлены)
+pip install pytest httpx pytest-asyncio aiohttp # Добавьте другие, если нужны
+
+# Запустить тесты (предполагается, что они в папке tests/)
+# Может потребоваться установка переменных окружения из .env
+# Используйте `pytest -s` для вывода print() из тестов
 pytest
 ```
-*(Add specific instructions if test structure differs)*
+*(Уточните, если для тестов нужна специфическая настройка или команды)*
 
-### Frontend Tests (Example: Jest / Playwright)
+### Frontend Тесты (Jest / Playwright)
 
 ```bash
 cd frontend
 
-# Run Unit/Integration Tests (Jest)
-npm test # or yarn test
+# Запустить Unit/Integration Тесты (например, Jest)
+npm test # или yarn test
 
-# Run End-to-End Tests (Playwright)
-# First time setup: npx playwright install
-npm run test:e2e # or yarn test:e2e (Assuming script exists in package.json)
+# Запустить End-to-End Тесты (например, Playwright)
+# Первый запуск: npx playwright install
+npm run test:e2e # или yarn test:e2e (Если скрипт настроен в package.json)
 ```
-*(Add specific instructions for running tests)*
+*(Уточните команды и настройку, если используется)*
 
-## Deployment (Using Pulumi)
+## Деплой (Используя Pulumi)
 
-Deployment creates/updates the Azure infrastructure and deploys the backend container and frontend static files.
+Деплой создает/обновляет инфраструктуру Azure и развертывает backend (Docker образ в ACR и Function App) и frontend (статические файлы в Blob Storage).
 
-1.  **Select/Create Pulumi Stack:**
+1.  **Выбрать/Создать стек Pulumi:**
     ```bash
-    # Choose an existing stack (e.g., dev or prod)
+    # Выбрать существующий стек (например, dev или prod)
     pulumi stack select dev
 
-    # Or create a new one
+    # Или создать новый
     # pulumi stack init my-new-stack
     ```
 
-2.  **Configure Stack (if new):**
-    Set required configuration values for the stack. The stack-specific naming is handled in the code, but location might be needed.
+2.  **Настроить стек (если новый):**
+    Установить необходимые значения конфигурации для стека.
     ```bash
-    # Example for a new stack
-    pulumi config set azure-native:location <your-azure-region> # e.g., westus2
+    # Обязательно для нового стека:
+    pulumi config set azure-native:location <your-azure-region> # например, westus2
 
-    # Optional: Set secrets via App Configuration (if needed by backend)
-    # pulumi config set --secret MySecretSetting mySecretValue
+    # Опционально: Переменные для Function App (если нужны и не заданы в коде)
+    # pulumi config set --secret AppSettingName AppSettingValue
     ```
-    *Note: Resource group name, storage account names, etc., are now generated dynamically based on the stack name.* 
+    *Имена ресурсов (группа, хранилище и т.д.) генерируются динамически с суффиксом стека.* 
 
-3.  **Build Frontend Static Files:**
-    Pulumi needs the static output from the frontend build.
+3.  **Собрать статические файлы Frontend:**
+    Pulumi загружает статический вывод сборки frontend.
     ```bash
     cd frontend
-npm install # or yarn install
-npm run build # This should generate static files in frontend/out/
+npm install # или yarn install
+npm run build # Генерирует статические файлы в frontend/out/
 cd ..
     ```
-    *Important:* The `build` script in `frontend/package.json` should generate a static export suitable for hosting on Blob Storage (likely using `next build && next export`). `NEXT_PUBLIC_API_URL` is **not** needed at build time for static export if API calls are made client-side relative to the deployed backend URL.
+    *Важно:* Скрипт `build` в `frontend/package.json` должен выполнять статический экспорт (`next build`). `NEXT_PUBLIC_API_URL` **не** требуется во время сборки, так как API вызывается на клиенте относительно URL бэкенда (который определяется во время выполнения).
 
-4.  **Deploy with Pulumi:**
-    Run `pulumi up` from the project root.
+4.  **Развернуть с помощью Pulumi:**
+    Запустите `pulumi up` из корневой директории проекта.
     ```bash
-    # Ensure you are in the project root directory
-    # Ensure your virtual environment is active
+    # Убедитесь, что вы в корне проекта
+    # Убедитесь, что ваше виртуальное окружение активировано
 
     pulumi up
     ```
-    Pulumi will show a preview of the changes. Review and confirm to proceed.
+    Pulumi покажет предварительный просмотр изменений. Проверьте и подтвердите для продолжения. Pulumi автоматически соберет Docker образ из `backend/Dockerfile`, загрузит его в созданный Azure Container Registry и развернет Function App и статику frontend.
 
-5.  **Get Outputs:**
-    After successful deployment, get the endpoints:
+5.  **Получить выходные данные:**
+    После успешного развертывания получите эндпоинты:
     ```bash
-    # Get outputs for the current stack (e.g., 'dev')
     pulumi stack output
 
-    # Specific outputs (names are now stack-suffixed):
-    pulumi stack output functionEndpoint_dev
-    pulumi stack output frontendUrl_dev
+    # Или конкретные выходы:
+pulumi stack output function_app_default_hostname
+pulumi stack output static_website_endpoint
     ```
+    *(Имена совпадают с теми, что экспортируются в `infrastructure/__main__.py`)*
 
-## Cleaning Up
+## Очистка
 
-To remove all resources created by a specific stack:
+Для удаления всех ресурсов, созданных определенным стеком:
 
 ```bash
-# Ensure the correct stack is selected
+# Убедитесь, что выбран правильный стек
 pulumi stack select <stack-to-destroy>
 
 pulumi destroy
 
-# Optionally remove the stack history
+# Опционально удалить историю стека
 pulumi stack rm <stack-to-destroy>
 ```

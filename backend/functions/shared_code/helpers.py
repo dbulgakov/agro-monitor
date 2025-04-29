@@ -1,7 +1,6 @@
 import logging
 import os
 import io
-import json
 import numpy as np
 import rasterio
 import openai
@@ -9,9 +8,7 @@ import openai
 from azure.storage.blob.aio import BlobServiceClient
 from azure.storage.blob import ContentSettings # Keep sync for this
 from azure.core.exceptions import ResourceNotFoundError
-from datetime import datetime
 from typing import List, Optional
-import time
 import asyncio # Import asyncio
 import planetary_computer
 from pystac_client import Client

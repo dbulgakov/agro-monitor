@@ -1,14 +1,12 @@
-import json
 import io
 import pytest
 import asyncio # Import asyncio
 import numpy as np
-import azure.functions as func
 import rasterio # Add import
 import pystac # Add import
 import matplotlib.pyplot as plt # Import plt
 # Import AsyncMock
-from unittest.mock import Mock, patch, ANY, call, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from azure.core.exceptions import ResourceNotFoundError
 # Import specific async types
 import azure.storage.blob.aio as azure_blob_aio
@@ -17,7 +15,7 @@ from azure.storage.blob import BlobProperties, ContentSettings
 
 # Change import to be relative to project root
 from functions.shared_code import helpers
-from functions.shared_code.schemas import JobStatus, ReportData, JobStatusData
+from functions.shared_code.schemas import JobStatus, ReportData
 
 # Use constants for test job ID and container names set in conftest
 TEST_JOB_ID = "helper-test-job-456"

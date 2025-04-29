@@ -2,8 +2,6 @@ import json
 import pytest
 import azure.functions as func
 from unittest.mock import Mock, patch
-from azure.core.exceptions import ResourceNotFoundError
-from pydantic import ValidationError
 import os
 from azure.storage.blob import BlobProperties, BlobClient, BlobServiceClient
 

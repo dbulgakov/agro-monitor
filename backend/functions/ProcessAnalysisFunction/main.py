@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt # Add Matplotlib
 import matplotlib.colors as colors # Add Matplotlib colors
 
 # Относительные импорты для shared code
-from ..shared_code.schemas import StartAnalysisPayload, ReportData, JobStatus, JobStatusData
+from ..shared_code.schemas import StartAnalysisPayload, ReportData, JobStatus
 from ..shared_code.helpers import (
     update_job_status,
     get_job_status,

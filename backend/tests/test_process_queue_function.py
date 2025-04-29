@@ -1,5 +1,4 @@
 import json
-import io
 import pytest
 import asyncio # Import asyncio
 import numpy as np
@@ -7,13 +6,13 @@ import azure.functions as func
 import rasterio # Add import
 import matplotlib.pyplot as plt # Import plt
 # Import AsyncMock
-from unittest.mock import Mock, patch, ANY, call, MagicMock, AsyncMock
+from unittest.mock import Mock, ANY, call, AsyncMock
 # Remove ThreadPoolExecutor
 
 # Change import to be relative to project root
 from functions.ProcessQueueFunction.main import main
 # Import necessary schemas and JobStatus
-from functions.shared_code.schemas import StartAnalysisPayload, JobStatus, ReportData
+from functions.shared_code.schemas import JobStatus, ReportData
 from functions.shared_code import helpers # Import the module to patch its functions
 
 # --- Constants & Test Data ---

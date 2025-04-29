@@ -1,16 +1,14 @@
 import json
-import asyncio
 import pytest
 import azure.functions as func
 # Import the correct classes for spec
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient, BlobClient as AsyncBlobClient
 from unittest.mock import Mock, patch, AsyncMock # Import AsyncMock
-from azure.core.exceptions import ResourceNotFoundError
 import pytest_asyncio
 import time
 
 from functions.ProgressFunction.main import main, progress_generator
-from functions.shared_code.schemas import ErrorResponse, ProgressUpdate, JobStatus
+from functions.shared_code.schemas import ProgressUpdate, JobStatus
 
 TEST_JOB_ID = "test-job-progress-123"
 
