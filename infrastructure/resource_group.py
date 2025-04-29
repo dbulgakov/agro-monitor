@@ -1,9 +1,12 @@
+import pulumi
 import pulumi_azure_native as azure_native
-from .config import resource_group_name, location
+from .config import location
 
 def create_resource_group():
+    stack = pulumi.get_stack()
+    resource_group_name = f"rg-agromonitor-{stack}"
     return azure_native.resources.ResourceGroup(
-        "resourceGroup",
+        f"rg-{stack}",
         resource_group_name=resource_group_name,
         location=location
     )

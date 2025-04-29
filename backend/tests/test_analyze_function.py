@@ -3,7 +3,7 @@ import uuid
 import pytest
 import os
 import azure.functions as func
-from unittest.mock import Mock, patch, ANY, call # Use unittest.mock or install pytest-mock
+from unittest.mock import Mock, patch, ANY, call, AsyncMock # Use unittest.mock or install pytest-mock
 
 # Change import to be relative to project root
 from functions.AnalyzeFunction.main import main
@@ -35,10 +35,11 @@ def blob_client_from_conftest(mock_blob_service_client_factory):
 
 # --- Test Cases ---
 
+@pytest.mark.asyncio
 @patch('functions.AnalyzeFunction.main.update_job_status') # Patch where used
 @patch('functions.AnalyzeFunction.main.uuid.uuid4')
 @patch('functions.AnalyzeFunction.main.QueueClient.from_connection_string')
-def test_analyze_success(mock_queue_client_from_conn_str, mock_uuid4, mock_update_status, blob_client_from_conftest):
+async def test_analyze_success(mock_queue_client_from_conn_str, mock_uuid4, mock_update_status, blob_client_from_conftest):
     """Test successful analysis request."""
     # Arrange
     # Read constants set by fixture in conftest.py
@@ -50,8 +51,8 @@ def test_analyze_success(mock_queue_client_from_conn_str, mock_uuid4, mock_updat
     test_uuid = uuid.UUID('12345678-1234-5678-1234-567812345678')
     mock_uuid4.return_value = test_uuid
 
-    # Mock QueueClient and its methods
-    mock_queue_client = Mock()
+    # Mock QueueClient and its methods using AsyncMock for async context manager
+    mock_queue_client = AsyncMock()
     mock_queue_client_from_conn_str.return_value = mock_queue_client # Simpler mock setup
 
     # Create a mock HttpRequest
@@ -63,7 +64,7 @@ def test_analyze_success(mock_queue_client_from_conn_str, mock_uuid4, mock_updat
     )
 
     # Act
-    response = main(req)
+    response = await main(req)
 
     # Assert
     assert response.status_code == 202
@@ -101,7 +102,8 @@ def test_analyze_success(mock_queue_client_from_conn_str, mock_uuid4, mock_updat
     blob_client_from_conftest.upload_blob.assert_not_called()
     blob_client_from_conftest.set_blob_metadata.assert_not_called()
 
-def test_analyze_invalid_json(blob_client_from_conftest):
+@pytest.mark.asyncio
+async def test_analyze_invalid_json(blob_client_from_conftest):
     """Test request with invalid JSON body."""
     # Arrange
     req = func.HttpRequest(
@@ -112,7 +114,7 @@ def test_analyze_invalid_json(blob_client_from_conftest):
     )
 
     # Act
-    response = main(req)
+    response = await main(req)
 
     # Assert
     assert response.status_code == 400
@@ -126,7 +128,8 @@ def test_analyze_invalid_json(blob_client_from_conftest):
     blob_client_from_conftest.upload_blob.assert_not_called()
     blob_client_from_conftest.set_blob_metadata.assert_not_called()
 
-def test_analyze_validation_error(blob_client_from_conftest):
+@pytest.mark.asyncio
+async def test_analyze_validation_error(blob_client_from_conftest):
     """Test request with data that fails Pydantic validation."""
     # Arrange
     invalid_payload = VALID_PAYLOAD_DICT.copy()
@@ -140,7 +143,7 @@ def test_analyze_validation_error(blob_client_from_conftest):
     )
 
     # Act
-    response = main(req)
+    response = await main(req)
 
     # Assert
     assert response.status_code == 400
@@ -158,17 +161,19 @@ def test_analyze_validation_error(blob_client_from_conftest):
     blob_client_from_conftest.upload_blob.assert_not_called()
     blob_client_from_conftest.set_blob_metadata.assert_not_called()
 
+@pytest.mark.asyncio
 @patch('functions.AnalyzeFunction.main.update_job_status') # Patch where used
 @patch('functions.AnalyzeFunction.main.uuid.uuid4')
 @patch('functions.AnalyzeFunction.main.QueueClient.from_connection_string')
-def test_analyze_queue_send_error(mock_queue_client_from_conn_str, mock_uuid4, mock_update_status, blob_client_from_conftest):
+async def test_analyze_queue_send_error(mock_queue_client_from_conn_str, mock_uuid4, mock_update_status, blob_client_from_conftest):
     """Test scenario where sending message to queue fails."""
      # Arrange
     test_uuid = uuid.UUID('12345678-1234-5678-1234-567812345678')
     mock_uuid4.return_value = test_uuid
 
-    # Mock QueueClient to raise error on send_message
-    mock_queue_client = Mock()
+    # Mock QueueClient to raise error on send_message, use AsyncMock
+    mock_queue_client = AsyncMock()
+    # Configure the async mock's send_message method
     mock_queue_client.send_message.side_effect = Exception("Queue connection failed")
     mock_queue_client_from_conn_str.return_value = mock_queue_client # Simpler mock setup
 
@@ -182,7 +187,7 @@ def test_analyze_queue_send_error(mock_queue_client_from_conn_str, mock_uuid4, m
     )
 
     # Act
-    response = main(req)
+    response = await main(req)
 
     # Assert
     # The function now returns 500 on queue send failure after attempting FAILED status update
@@ -215,7 +220,8 @@ def test_analyze_queue_send_error(mock_queue_client_from_conn_str, mock_uuid4, m
     assert "Failed to queue job" in failed_call_args[3]
     assert "Queue connection failed" in failed_call_args[3]
 
-def test_analyze_missing_connection_string(monkeypatch):
+@pytest.mark.asyncio
+async def test_analyze_missing_connection_string(monkeypatch):
     """Test scenario where AzureWebJobsStorage is not set *after* initial setup."""
     # Arrange
     # Need to remove the env var *after* the autouse fixture has run
@@ -238,7 +244,7 @@ def test_analyze_missing_connection_string(monkeypatch):
     )
 
     # Act
-    response = main(req)
+    response = await main(req)
 
     # Assert
     # Check for 503 Service Unavailable due to configuration error

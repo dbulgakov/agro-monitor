@@ -3,18 +3,22 @@ import json
 import uuid
 import os
 import azure.functions as func
-from azure.storage.queue import QueueClient, TextBase64EncodePolicy
+# Use async queue client
+from azure.storage.queue.aio import QueueClient
+# Keep sync policy for now as helper is sync
+from azure.storage.queue import TextBase64EncodePolicy
 from pydantic import ValidationError
 
 # Revert to relative import for shared code within the functions package
 from ..shared_code.schemas import StartAnalysisPayload, StartAnalysisResponse, ErrorResponse, JobStatus
+# Keep using sync helper for now
 from ..shared_code.helpers import update_job_status, check_environment_variables
 
 # Define required variables, but check inside main
 REQUIRED_ENV_VARS = [
-    "AzureWebJobsStorage", 
-    "REPORTS_CONTAINER_NAME", 
-    "IMAGES_CONTAINER_NAME", 
+    "AzureWebJobsStorage",
+    "REPORTS_CONTAINER_NAME",
+    "IMAGES_CONTAINER_NAME",
     "ANALYSIS_QUEUE_NAME"
     # OPENAI_API_KEY is optional, checked where needed
 ]
@@ -23,8 +27,9 @@ REQUIRED_ENV_VARS = [
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")
 ANALYSIS_QUEUE_NAME = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests") # Default used in function.json binding
 
-def main(req: func.HttpRequest) -> func.HttpResponse:
-    # Check environment variables at the beginning of the function execution
+# Change to async def
+async def main(req: func.HttpRequest) -> func.HttpResponse:
+    # Check environment variables (sync check is okay here)
     try:
         check_environment_variables(REQUIRED_ENV_VARS)
     except ValueError as config_error:
@@ -35,20 +40,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
              mimetype="application/json",
              status_code=503 # Service Unavailable due to config
         )
-        
+
     logging.info('Python HTTP trigger function processed an /analyze request.')
 
-    # Connection string check is implicitly handled by check_environment_variables
-    # if not AZURE_STORAGE_CONNECTION_STRING:
-    #     logging.error("AzureWebJobsStorage connection string is not set.")
-    #     error_resp = ErrorResponse(message="Internal server configuration error.")
-    #     return func.HttpResponse(
-    #          error_resp.model_dump_json(),
-    #          mimetype="application/json",
-    #          status_code=500
-    #     )
-
     try:
+        # Getting JSON body is sync
         req_body = req.get_json()
     except ValueError:
         logging.error("Invalid JSON received.")
@@ -61,19 +57,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     job_id = None # Initialize for potential use in exception logging
     try:
+        # Validation is sync
         payload = StartAnalysisPayload.model_validate(req_body)
         logging.info(f"Received valid analysis request for area type: {payload.area.geometry.type.value}")
 
         job_id = str(uuid.uuid4())
         logging.info(f"Generated Job ID: {job_id}")
 
-        # Create initial PENDING status blob
+        # Create initial PENDING status blob - using sync helper for now
         try:
+            # This remains a sync call for now
             update_job_status(job_id, JobStatus.PENDING, 0, "Analysis request received and queued.")
             logging.info(f"Initial PENDING status set for Job ID {job_id}")
         except Exception as status_e:
-             # Log error but proceed to queueing if possible? Or fail here?
-             # Let's fail fast if we can't even set the initial status.
              logging.error(f"Failed to set initial PENDING status for Job ID {job_id}: {status_e}", exc_info=True)
              error_resp = ErrorResponse(message="Failed to initialize analysis job status.")
              return func.HttpResponse(
@@ -87,19 +83,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "payload": payload.model_dump()
         }
 
+        # Use async queue client
         try:
+            # Initialize async client
             queue_client = QueueClient.from_connection_string(
                 conn_str=AZURE_STORAGE_CONNECTION_STRING,
                 queue_name=ANALYSIS_QUEUE_NAME,
-                message_encode_policy=TextBase64EncodePolicy()
+                message_encode_policy=TextBase64EncodePolicy() # Keep sync policy for now
             )
-            encoded_message = json.dumps(queue_message)
-            queue_client.send_message(encoded_message)
-            logging.info(f"Successfully sent message for Job ID {job_id} to queue '{ANALYSIS_QUEUE_NAME}'.")
+            # Use async context manager and await send_message
+            async with queue_client:
+                encoded_message = json.dumps(queue_message)
+                await queue_client.send_message(encoded_message)
+                logging.info(f"Successfully sent message for Job ID {job_id} to queue '{ANALYSIS_QUEUE_NAME}'.")
 
         except Exception as e:
             logging.error(f"Failed to send message to queue '{ANALYSIS_QUEUE_NAME}' for Job ID {job_id}: {e}", exc_info=True)
-            # Update status to FAILED if queueing fails
+            # Update status to FAILED - using sync helper
             try:
                 update_job_status(job_id, JobStatus.FAILED, -1, f"Failed to queue job: {type(e).__name__}: {str(e)[:200]}")
                 logging.info(f"Updated status to FAILED for Job ID {job_id} due to queue error.")
@@ -113,6 +113,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                  status_code=500
             )
 
+        # Sync response creation
         response_data = StartAnalysisResponse(jobId=job_id)
         return func.HttpResponse(
             response_data.model_dump_json(),

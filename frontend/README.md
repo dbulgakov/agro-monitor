@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend for Agro Monitor
 
-## Getting Started
+This is the Next.js frontend application for the Agro Monitor project.
 
-First, run the development server:
+## Development
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1.  **Navigate to the frontend directory:**
+    ```bash
+    cd frontend
+    ```
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    # or
+    yarn install
+    ```
+3.  **Run the development server:**
+    ```bash
+    npm run dev
+    # or
+    yarn dev
+    ```
+    The application will be available at `http://localhost:3000`.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Connecting to the Backend
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+-   **Mock API (Default):** By default, the dev server uses Next.js route handlers under `src/app/api/` to simulate backend responses. This allows for frontend development without a running backend.
+-   **Local Backend:** To connect to a locally running backend (e.g., the FastAPI app running on `http://localhost:8000`), create a `.env.local` file in the `frontend/` directory with the following content:
+    ```env
+    NEXT_PUBLIC_API_URL=http://localhost:8000/
+    ```
+    Restart the Next.js dev server after creating/modifying `.env.local`.
+-   **Deployed Backend:** When deployed, the frontend should ideally be configured to call the deployed backend URL. This is typically handled during the deployment process (see root `README.md`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Building for Production (Static Export)
 
-## Learn More
+This frontend is designed to be deployed as a set of static files (HTML/CSS/JS) hosted in Azure Blob Storage.
 
-To learn more about Next.js, take a look at the following resources:
+1.  **Build the application:**
+    ```bash
+    npm run build
+    # or
+    yarn build
+    ```
+    This command runs `next build` which generates an optimized production build.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+2.  **Export to static files:**
+    The `build` script should ideally include `next export` if not already configured in `next.config.js`. If `next export` needs to be run separately:
+    ```bash
+    # npx next export # Only if not part of `npm run build`
+    ```
+    This will generate the static HTML, CSS, and JavaScript files in the `out/` directory.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+These files in the `out/` directory are what Pulumi uploads to the Azure Storage Account static website hosting during deployment.
 
-## Deploy on Vercel
+## Testing
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+-   **Unit/Integration Tests:** (Assuming Jest is configured)
+    ```bash
+    npm test
+    # or
+    yarn test
+    ```
+-   **End-to-End Tests:** (Assuming Playwright is configured)
+    ```bash
+    # First time setup: npx playwright install
+    npm run test:e2e # (Or the specific script defined in package.json)
+    # or
+    yarn test:e2e
+    ```

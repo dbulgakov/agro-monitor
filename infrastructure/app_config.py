@@ -5,19 +5,27 @@ from .config import location # Assuming location is defined in config.py
 
 def create_app_configuration_store(rg):
     """Creates an Azure App Configuration store."""
-    store = azure_native.appconfiguration.ConfigurationStore("appConfigStore",
+    stack = pulumi.get_stack()
+    store_name = f"appcs-agromonitor-{stack}"
+    store = azure_native.appconfiguration.ConfigurationStore(f"appConfigStore-{stack}", # Pulumi name
         resource_group_name=rg.name,
         location=location, # Use the location from config
+        config_store_name=store_name, # Azure name
         sku=azure_native.appconfiguration.SkuArgs(
             name="Standard", # Choose Free or Standard tier
         )
     )
-    pulumi.export("appConfigurationEndpoint", store.endpoint)
+    pulumi.export(f"appConfigurationEndpoint_{stack}", store.endpoint) # Stack-specific export
     return store
 
 def add_app_configuration_key_value(rg, store, key, value, content_type="text/plain", tags=None):
     """Adds a Key-Value pair to the App Configuration store."""
-    kv = azure_native.appconfiguration.KeyValue(f"kv-{key.replace('_','-')}", # Resource name needs sanitization
+    stack = pulumi.get_stack()
+    # Resource name needs sanitization and stack prefix
+    safe_key_part = key.replace(':', '-').replace('_', '-').lower()
+    kv_resource_name = f"kv-{stack}-{safe_key_part}"
+
+    kv = azure_native.appconfiguration.KeyValue(kv_resource_name,
         config_store_name=store.name,
         resource_group_name=rg.name,
         key_value_name=key, # Use the actual key here

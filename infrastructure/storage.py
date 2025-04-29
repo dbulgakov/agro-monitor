@@ -4,11 +4,18 @@ import pulumi.asset as asset
 import os
 import mimetypes # To guess content type
 
-from .config import resource_group_name, location
+from .config import location # Removed resource_group_name import
 
 def create_storage_account(rg):
+    stack = pulumi.get_stack()
+    # Generate a unique name based on stack (Azure Storage names must be globally unique, lowercase alphanumeric, 3-24 chars)
+    # Example format: stagromonitor<stack><unique_hash_part>
+    # We might need a random suffix if stack names aren't enough for global uniqueness
+    storage_account_name = f"stagromonitor{stack}".lower()[:24] # Keep it short and lowercase
+
     account = azure_native.storage.StorageAccount(
-        "storageAccount",
+        f"storage-{stack}", # Pulumi resource name
+        account_name=storage_account_name, # Azure resource name
         resource_group_name=rg.name,
         location=location,
         sku=azure_native.storage.SkuArgs(
@@ -18,7 +25,7 @@ def create_storage_account(rg):
         enable_https_traffic_only=True,
     )
     static_website = azure_native.storage.StorageAccountStaticWebsite(
-        "staticWebsite",
+        f"staticWebsite-{stack}", # Pulumi resource name
         account_name=account.name,
         resource_group_name=rg.name,
         index_document="index.html",
@@ -46,7 +53,7 @@ def create_storage_account(rg):
                 content_type, _ = mimetypes.guess_type(local_path)
                 
                 # Create a Blob resource for each file
-                azure_native.storage.Blob(f"frontend-asset-{blob_name}",
+                azure_native.storage.Blob(f"frontend-asset-{stack}-{blob_name}",
                     account_name=account.name,
                     resource_group_name=rg.name,
                     container_name="$web", # Target the static website container
