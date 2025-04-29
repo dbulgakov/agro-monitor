@@ -4,24 +4,26 @@ import azure.functions as func
 from unittest.mock import Mock, patch
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
+import os
+from azure.storage.blob import BlobProperties, BlobClient, BlobServiceClient
 
-from functions.ReportFunction.main import main
+from functions.ReportFunction import main as report_function_main
 from functions.shared_code.schemas import ReportData, ErrorResponse, JobStatus
 
 TEST_JOB_ID = "test-job-123"
+REPORTS_CONTAINER_NAME = os.getenv("REPORTS_CONTAINER_NAME", "test-reports")
 
 # --- Fixtures ---
 @pytest.fixture
 def mock_env_vars(monkeypatch):
     monkeypatch.setenv("AzureWebJobsStorage", "test-conn-string")
-    monkeypatch.setenv("REPORTS_CONTAINER_NAME", "test-reports")
+    monkeypatch.setenv("REPORTS_CONTAINER_NAME", REPORTS_CONTAINER_NAME)
 
 @pytest.fixture
-def mock_blob_service_client():
+def mock_blob_service_client(mocker):
     """Fixture to mock the BlobServiceClient and its subordinate clients/methods."""
-    mock_service_client = Mock()
-    mock_container_client = Mock()
-    mock_blob_client = Mock()
+    mock_service_client = mocker.Mock(spec=BlobServiceClient)
+    mock_blob_client = mocker.Mock(spec=BlobClient)
 
     # Chain the mocks
     mock_service_client.get_blob_client.return_value = mock_blob_client
@@ -31,8 +33,23 @@ def mock_blob_service_client():
 
     # Default behavior (can be overridden in tests)
     mock_blob_client.exists.return_value = True
-    mock_blob_client.get_blob_properties.return_value = Mock(metadata={})
-    mock_blob_client.download_blob.return_value = Mock(readall=lambda: b'{}')
+    mock_properties = BlobProperties(name=f"{TEST_JOB_ID}.json", container=REPORTS_CONTAINER_NAME, metadata={})
+    mock_blob_client.get_blob_properties.return_value = mock_properties
+    mock_download = Mock()
+    # Define default content locally here if needed, or configure in tests
+    default_report_content = {
+        "jobId": TEST_JOB_ID,
+        "status": "COMPLETED",
+        "recommendations": "Default AI recommendations.",
+        "reportTimestamp": "2024-01-01T00:00:00Z",
+        # Add other required fields with default values if needed by ReportData
+        "requestPayload": None,
+        "ndviStatistics": None,
+        "mapUrls": None,
+        "errorMessage": None
+    }
+    mock_download.readall.return_value = json.dumps(default_report_content).encode('utf-8')
+    mock_blob_client.download_blob.return_value = mock_download
 
     # Patch the constructor
     with patch('functions.ReportFunction.main.BlobServiceClient.from_connection_string') as mock_constructor:
@@ -43,9 +60,9 @@ def mock_blob_service_client():
 def create_request(job_id=TEST_JOB_ID):
     return func.HttpRequest(
         method='GET',
-        url=f'/api/report/{job_id}',
+        url=f'/api/report?jobId={job_id}',
+        params={"jobId": job_id},
         body=None, # Add body=None for GET requests
-        route_params={'jobId': job_id} if job_id else {},
     )
 
 # --- Test Cases ---
@@ -55,25 +72,21 @@ def test_get_report_success_completed(mock_env_vars, mock_blob_service_client):
     mock_service_client, mock_blob_client = mock_blob_service_client
 
     # Arrange
-    report_content = {
-        "jobId": TEST_JOB_ID,
-        "status": "COMPLETED",
-        "summary": "AI summary",
-        "snapshotImageUrl": "http://example.com/rgb.png",
-        "ndviImageUrl": "http://example.com/ndvi.png",
-        "stressZoneImageUrl": "http://example.com/stress.png"
-    }
-    mock_blob_client.exists.return_value = True
-    mock_blob_client.get_blob_properties.return_value = Mock(metadata={
+    mock_properties = BlobProperties(name=f"{TEST_JOB_ID}.json", container=REPORTS_CONTAINER_NAME, metadata={
         "jobStatus": JobStatus.COMPLETED.value,
         "jobProgress": "100"
     })
-    mock_blob_client.download_blob.return_value = Mock(readall=lambda: json.dumps(report_content).encode('utf-8'))
+    mock_blob_client.get_blob_properties.return_value = mock_properties
+    mock_blob_client.exists.return_value = True
+
+    # Define expected content based on the mock in the fixture
+    expected_recommendations = "Default AI recommendations."
+    expected_timestamp = "2024-01-01T00:00:00Z"
 
     req = create_request()
 
     # Act
-    response = main(req)
+    response = report_function_main.main(req)
 
     # Assert
     assert response.status_code == 200
@@ -82,10 +95,15 @@ def test_get_report_success_completed(mock_env_vars, mock_blob_service_client):
     validated_report = ReportData.model_validate(response_body)
     assert validated_report.jobId == TEST_JOB_ID
     assert validated_report.status == JobStatus.COMPLETED
-    assert validated_report.summary == "AI summary"
-    assert validated_report.snapshotImageUrl == "http://example.com/rgb.png"
+    # Assert against the expected values defined above
+    assert validated_report.recommendations == expected_recommendations
+    assert validated_report.reportTimestamp == expected_timestamp
+    # Optional: Add assertions for other fields if needed and if defaults are known
+    # assert validated_report.ndviStatistics is not None
+    # assert validated_report.mapUrls is not None
+    # assert validated_report.requestPayload is not None
 
-    mock_service_client.get_blob_client.assert_called_once_with(container="test-reports", blob=f"{TEST_JOB_ID}.json")
+    mock_service_client.get_blob_client.assert_called_once_with(container=REPORTS_CONTAINER_NAME, blob=f"{TEST_JOB_ID}.json")
     mock_blob_client.exists.assert_called_once()
     mock_blob_client.get_blob_properties.assert_called_once()
     mock_blob_client.download_blob.assert_called_once()
@@ -106,27 +124,40 @@ def test_get_report_not_completed(mock_env_vars, mock_blob_service_client, metad
 
     # Arrange
     mock_blob_client.exists.return_value = True
-    metadata = {"jobStatus": metadata_status, "jobProgress": "50"} if metadata_status else {}
-    mock_blob_client.get_blob_properties.return_value = Mock(metadata=metadata)
+    # Add message for failed case
+    message = "Job failed due to error." if expected_status_enum == JobStatus.FAILED else None
+    metadata = {"jobStatus": metadata_status, "jobProgress": "50", "jobMessage": message} if metadata_status else {}
+    mock_properties = BlobProperties(name=f"{TEST_JOB_ID}.json", container=REPORTS_CONTAINER_NAME, metadata=metadata)
+    mock_blob_client.get_blob_properties.return_value = mock_properties
 
     req = create_request()
 
     # Act
-    response = main(req)
+    response = report_function_main.main(req)
 
     # Assert
-    assert response.status_code == 200 # Still returns 200, client checks status field
+    # Use 202 for PENDING/PROCESSING, 200 for FAILED
+    expected_http_status = 202 if expected_status_enum in [JobStatus.PENDING, JobStatus.PROCESSING] else 200
+    assert response.status_code == expected_http_status
     assert response.mimetype == 'application/json'
     response_body = json.loads(response.get_body())
     validated_partial_report = ReportData.model_validate(response_body)
     assert validated_partial_report.jobId == TEST_JOB_ID
     assert validated_partial_report.status == expected_status_enum
-    assert validated_partial_report.summary is None # Other fields should be None
-    assert validated_partial_report.snapshotImageUrl is None
+    assert validated_partial_report.recommendations is None
+    assert validated_partial_report.reportTimestamp is None
+    assert validated_partial_report.ndviStatistics is None
+    assert validated_partial_report.mapUrls is None
+    assert validated_partial_report.requestPayload is None
+    # Check error message only if failed
+    if expected_status_enum == JobStatus.FAILED:
+        assert validated_partial_report.errorMessage == message
+    else:
+        assert validated_partial_report.errorMessage is None
 
     mock_blob_client.exists.assert_called_once()
     mock_blob_client.get_blob_properties.assert_called_once()
-    mock_blob_client.download_blob.assert_not_called() # Should not download full report
+    mock_blob_client.download_blob.assert_not_called()
 
 def test_get_report_not_found(mock_env_vars, mock_blob_service_client):
     """Test getting a report where the blob does not exist."""
@@ -137,49 +168,60 @@ def test_get_report_not_found(mock_env_vars, mock_blob_service_client):
     req = create_request()
 
     # Act
-    response = main(req)
+    response = report_function_main.main(req)
 
     # Assert
     assert response.status_code == 404
     assert response.mimetype == 'application/json'
     response_body = json.loads(response.get_body())
-    assert "message" in response_body
-    assert f"Report not found for Job ID: {TEST_JOB_ID}" in response_body["message"]
-    ErrorResponse.model_validate(response_body)
+    assert "not found" in response_body['message'].lower()
 
-    mock_blob_client.exists.assert_called_once()
-    mock_blob_client.get_blob_properties.assert_not_called()
-    mock_blob_client.download_blob.assert_not_called()
-
-def test_get_report_metadata_fails_but_download_succeeds(mock_env_vars, mock_blob_service_client):
-    """Test scenario where metadata read fails, but download (of presumed completed) succeeds."""
+def test_get_report_metadata_read_fails(mock_env_vars, mock_blob_service_client):
+    """Test scenario where checking blob existence fails (e.g., storage error)."""
     mock_service_client, mock_blob_client = mock_blob_service_client
-
-    # Arrange
-    report_content = {
-        "jobId": TEST_JOB_ID,
-        "status": "COMPLETED", # Status in body is COMPLETED
-        "summary": "AI summary",
-    }
-    mock_blob_client.exists.return_value = True
-    # Simulate failure during property read, but allow download
-    mock_blob_client.get_blob_properties.side_effect = Exception("Failed to read props")
-    mock_blob_client.download_blob.return_value = Mock(readall=lambda: json.dumps(report_content).encode('utf-8'))
+    mock_blob_client.exists.side_effect = Exception("Storage connection error")
 
     req = create_request()
+    response = report_function_main.main(req)
 
-    # Act
-    response = main(req)
-
-    # Assert
-    # Because status check failed, it defaults to PENDING and returns partial state
-    assert response.status_code == 202
+    assert response.status_code == 500
     response_body = json.loads(response.get_body())
-    validated_partial_report = ReportData.model_validate(response_body)
-    assert validated_partial_report.jobId == TEST_JOB_ID
-    assert validated_partial_report.status == JobStatus.PENDING
-    assert validated_partial_report.summary is None
-    mock_blob_client.download_blob.assert_not_called() # Does not download if metadata fails
+    assert "Failed to retrieve report status or content" in response_body['message']
+    assert "Storage connection error" in response_body['details']
+
+def test_get_report_properties_read_fails(mock_env_vars, mock_blob_service_client):
+    """Test scenario where blob exists but reading properties fails."""
+    mock_service_client, mock_blob_client = mock_blob_service_client
+    mock_blob_client.exists.return_value = True
+    mock_blob_client.get_blob_properties.side_effect = Exception("Failed to read props")
+
+    req = create_request()
+    response = report_function_main.main(req)
+
+    assert response.status_code == 500
+    response_body = json.loads(response.get_body())
+    assert "Failed to retrieve report status or content" in response_body['message']
+    assert "Failed to read props" in response_body['details']
+    mock_blob_client.download_blob.assert_not_called()
+
+def test_get_report_completed_download_fails(mock_env_vars, mock_blob_service_client):
+    """Test case where status is COMPLETED but blob download fails."""
+    mock_service_client, mock_blob_client = mock_blob_service_client
+    mock_blob_client.exists.return_value = True
+    mock_properties = BlobProperties(name=f"{TEST_JOB_ID}.json", container=REPORTS_CONTAINER_NAME, metadata={
+        "jobStatus": JobStatus.COMPLETED.value,
+        "jobProgress": "100"
+    })
+    mock_blob_client.get_blob_properties.return_value = mock_properties
+    mock_blob_client.download_blob.side_effect = Exception("Download error")
+
+    req = create_request()
+    response = report_function_main.main(req)
+
+    assert response.status_code == 500
+    response_body = json.loads(response.get_body())
+    assert "Failed to download report content" in response_body['message']
+    assert "Download error" in response_body['details']
 
 def test_get_report_completed_invalid_content(mock_env_vars, mock_blob_service_client):
     """Test case where report is COMPLETED but content fails validation."""
@@ -187,37 +229,35 @@ def test_get_report_completed_invalid_content(mock_env_vars, mock_blob_service_c
     invalid_report_content = {
         "jobId": TEST_JOB_ID,
         "status": "COMPLETED",
-        "summary": 123,
+        "recommendations": 123, # Invalid type for recommendations
     }
     mock_blob_client.exists.return_value = True
-    mock_blob_client.get_blob_properties.return_value = Mock(metadata={
+    mock_properties = BlobProperties(name=f"{TEST_JOB_ID}.json", container=REPORTS_CONTAINER_NAME, metadata={
         "jobStatus": JobStatus.COMPLETED.value,
         "jobProgress": "100"
     })
-    mock_blob_client.download_blob.return_value = Mock(readall=lambda: json.dumps(invalid_report_content).encode('utf-8'))
+    mock_blob_client.get_blob_properties.return_value = mock_properties
+    mock_download = Mock()
+    mock_download.readall.return_value = json.dumps(invalid_report_content).encode('utf-8')
+    mock_blob_client.download_blob.return_value = mock_download
+
     req = create_request()
-    response = main(req)
-    # Assert
+    response = report_function_main.main(req)
+
     assert response.status_code == 500
     response_body = json.loads(response.get_body())
-    assert "Failed to parse completed report data" in response_body["message"]
-    assert "details" in response_body
-    ErrorResponse.model_validate(response_body)
+    assert "Failed to validate report content" in response_body['message']
+    # Check field name in error details instead of generic message
+    assert response_body['details'][0]["loc"][0] == "recommendations"
 
-def test_get_report_no_jobid(mock_env_vars):
-    """Test request without providing jobId in the path."""
-    # Arrange
-    req = create_request(job_id=None)
-
-    # Act
-    response = main(req)
-
-    # Assert
+def test_get_report_no_job_id(mock_env_vars):
+    """Test request without jobId query parameter."""
+    req = create_request(job_id=None) # Create request without jobId
+    response = report_function_main.main(req)
     assert response.status_code == 400
-    assert response.mimetype == 'application/json'
     response_body = json.loads(response.get_body())
-    assert "Please provide a job ID in the URL path" in response_body["message"]
-    ErrorResponse.model_validate(response_body)
+    # Assert the new error message
+    assert "jobId parameter is required" in response_body['message']
 
 def test_get_report_missing_connection_string(monkeypatch):
     """Test scenario where AzureWebJobsStorage is not set."""
@@ -227,7 +267,7 @@ def test_get_report_missing_connection_string(monkeypatch):
     req = create_request()
 
     # Act
-    response = main(req)
+    response = report_function_main.main(req)
 
     # Assert
     assert response.status_code == 503

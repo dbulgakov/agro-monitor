@@ -1,8 +1,6 @@
 import pulumi
 import pulumi_azure_native as azure_native
-import pulumi.asset as asset
 import pulumi_docker as docker # Import Docker provider
-import os
 
 from .registry import get_registry_credentials # Import ACR credentials function
 

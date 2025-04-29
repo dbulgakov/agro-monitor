@@ -9,8 +9,6 @@ from .config import location # Removed resource_group_name import
 def create_storage_account(rg):
     stack = pulumi.get_stack()
     # Generate a unique name based on stack (Azure Storage names must be globally unique, lowercase alphanumeric, 3-24 chars)
-    # Example format: stagromonitor<stack><unique_hash_part>
-    # We might need a random suffix if stack names aren't enough for global uniqueness
     storage_account_name = f"stagromonitor{stack}".lower()[:24] # Keep it short and lowercase
 
     account = azure_native.storage.StorageAccount(

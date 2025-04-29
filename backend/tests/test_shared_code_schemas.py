@@ -6,7 +6,9 @@ from functions.shared_code.schemas import (
     GeoJsonPointGeometry,
     GeoJsonPolygonGeometry,
     GeoJsonFeaturePoint,
-    GeoJsonFeaturePolygon
+    GeoJsonFeaturePolygon,
+    GeoJsonGeometry,
+    GeometryType
 )
 
 # --- Test Data ---
@@ -83,7 +85,14 @@ def test_polygon_geometry_valid():
     """Test valid polygon geometry passes validation."""
     # Tested implicitly via VALID_PAYLOAD_POLYGON
     payload = StartAnalysisPayload.model_validate(VALID_PAYLOAD_POLYGON)
-    assert isinstance(payload.area.geometry, GeoJsonPolygonGeometry)
+    # Check isinstance against base type and assert the type attribute
+    assert isinstance(payload.area.geometry, GeoJsonGeometry)
+    assert payload.area.geometry.type == GeometryType.POLYGON
+    # Ensure coordinates structure matches polygon (list of list of lists)
+    assert isinstance(payload.area.geometry.coordinates, list)
+    assert isinstance(payload.area.geometry.coordinates[0], list)
+    # Coordinates are lists of numbers [lon, lat]
+    assert isinstance(payload.area.geometry.coordinates[0][0], list)
 
 
 @pytest.mark.parametrize(

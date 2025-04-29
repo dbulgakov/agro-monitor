@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator, ValidationError
-from typing import List, Literal, Union, Optional, Tuple, Any
+from typing import List, Literal, Union, Optional, Tuple, Any, Dict
 from enum import Enum
 from datetime import datetime
 
@@ -12,6 +12,7 @@ class JobStatus(str, Enum):
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
 
 class GeoJsonType(str, Enum):
     POINT = "Point"
@@ -36,13 +37,26 @@ class GeoJsonFeaturePolygon(BaseModel):
     geometry: GeoJsonPolygonGeometry
     properties: Optional[dict] = None
 
+class GeometryType(str, Enum):
+    POLYGON = "Polygon"
+    POINT = "Point"
+
+class GeoJsonGeometry(BaseModel):
+    type: GeometryType
+    coordinates: Any
+
+class AreaOfInterest(BaseModel):
+    type: str = Field("Feature", frozen=True)
+    geometry: GeoJsonGeometry
+    properties: Optional[Dict[str, Any]] = None
+
 class StartAnalysisPayload(BaseModel):
-    area: Union[GeoJsonFeaturePoint, GeoJsonFeaturePolygon]
+    area: AreaOfInterest
     frequency: Frequency
     ndvi_threshold: float = Field(..., ge=0, lt=1)
-    date_range: str
+    date_range: str = Field(..., description="Date range in ISO 8601 interval format, e.g., '2023-01-01/2023-02-01'")
     max_cloud_cover: float = Field(..., ge=0, le=100)
-    crop_type: str
+    crop_type: str = Field(..., description="Type of crop being analyzed")
 
     @field_validator('date_range')
     @classmethod
@@ -62,8 +76,8 @@ class StartAnalysisPayload(BaseModel):
 
     @field_validator('area')
     @classmethod
-    def check_polygon_closure(cls, v: Union[GeoJsonFeaturePoint, GeoJsonFeaturePolygon]) -> Union[GeoJsonFeaturePoint, GeoJsonFeaturePolygon]:
-        if isinstance(v.geometry, GeoJsonPolygonGeometry):
+    def check_polygon_closure(cls, v: AreaOfInterest) -> AreaOfInterest:
+        if v.geometry.type == GeometryType.POLYGON:
             for ring in v.geometry.coordinates:
                 if not ring:
                     raise ValueError("Polygon ring cannot be empty.")
@@ -74,17 +88,17 @@ class StartAnalysisPayload(BaseModel):
         return v
 
 class StartAnalysisResponse(BaseModel):
-    jobId: str
+    jobId: str = Field(..., description="Unique identifier for the analysis job")
 
 class ReportData(BaseModel):
     jobId: str
     status: JobStatus
-    summary: Optional[str] = None
-    snapshotImageUrl: Optional[str] = None
-    ndviImageUrl: Optional[str] = None
-    stressZoneImageUrl: Optional[str] = None
-    input_parameters: Optional[dict] = None
-    processing_details: Optional[dict] = None
+    requestPayload: Optional[StartAnalysisPayload] = None
+    reportTimestamp: Optional[str] = None
+    ndviStatistics: Optional[Dict[str, Optional[float]]] = None
+    mapUrls: Optional[Dict[str, Optional[str]]] = None
+    recommendations: Optional[str] = None
+    errorMessage: Optional[str] = None
 
 class ErrorResponse(BaseModel):
     message: str
@@ -95,4 +109,9 @@ class ProgressUpdate(BaseModel):
     status: JobStatus
     progress: int = Field(..., ge=-1, le=100)
     message: Optional[str] = None
-    timestamp: float 
+    timestamp: float
+
+class JobStatusData(BaseModel):
+    status: JobStatus
+    progress: int
+    message: Optional[str] = None

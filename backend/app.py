@@ -1,11 +1,11 @@
 # app.py
-import os
+# import os # Removed unused import
 # import json # No longer needed here
 # import asyncio # No longer needed here
 # import uuid # No longer needed here
 from fastapi import FastAPI #, HTTPException, Request # Removed unused imports
 # from fastapi.responses import StreamingResponse # No longer needed here
-from pydantic import BaseModel
+# from pydantic import BaseModel # No longer needed here
 import logging
 
 # Import the async clients - Still needed if routers use utils directly, TBC
@@ -14,13 +14,9 @@ import logging
 # --- Import Routers ---
 from routers import analyze, report, progress # Assuming they are in a 'routers' package
 
-# TODO: Import shared schemas if needed (e.g., from shared_code)
-# This might be better placed within the routers or a dedicated models file
-# from shared_code.schemas import ...
-
 # Configure logging
 logging.basicConfig(level=logging.INFO) # Adjust level as needed
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__) # Removed unused logger
 
 # --- Config --- #
 # Config needed by routers might be better defined within them or a central config module
@@ -41,23 +37,23 @@ app = FastAPI(
 # Define models needed by multiple routers or keep them within router files?
 # For now, keep them here if they were used by multiple original endpoints.
 # Alternatively, create a backend/models.py
-class AnalyzeRequest(BaseModel):
-    # Define request model based on frontend/openapi.yaml
-    area: dict # GeoJSON Feature
-    date_range: str
-    ndvi_threshold: float
-    max_cloud_cover: int
-    crop_type: str
-    frequency: str
+# class AnalyzeRequest(BaseModel):
+#     # Define request model based on frontend/openapi.yaml
+#     area: dict # GeoJSON Feature
+#     date_range: str
+#     ndvi_threshold: float
+#     max_cloud_cover: int
+#     crop_type: str
+#     frequency: str
 
-class AnalyzeResponse(BaseModel):
-    jobId: str
+# class AnalyzeResponse(BaseModel):
+#     jobId: str
 
-class JobProgress(BaseModel):
-    progress: int
-    statusMessage: str
-    isComplete: bool
-    details: dict | None = None
+# class JobProgress(BaseModel):
+#     progress: int
+#     statusMessage: str
+#     isComplete: bool
+#     details: dict | None = None
 
 # --- Include Routers --- #
 app.include_router(analyze.router, prefix="/analyze", tags=["Analysis"])

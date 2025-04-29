@@ -6,7 +6,6 @@ import logging
 
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient
-from azure.core.exceptions import ResourceNotFoundError
 
 from ..shared_code.schemas import ProgressUpdate, ErrorResponse, JobStatus
 from ..shared_code.helpers import check_environment_variables

@@ -4,17 +4,20 @@ azure-functions-fastapi==1.3.0
 # uvicorn[standard] # Removing as Azure Functions provides the server
 pydantic==2.7.1 # For data validation based on OpenAPI schema
 # azure-cosmos # Removed as we switched to Blob Storage for state/reports
-azure-storage-queue==12.9.0
-azure-storage-blob==12.19.1
+# azure-storage-queue==12.9.0 # Replacing with async version
+azure-storage-queue-aio>=12.1.0b1 # Async version
+# azure-storage-blob==12.19.1 # Replacing with async version
+azure-storage-blob-aio>=12.8.0 # Async version
 pystac-client==0.7.6
 planetary-computer==1.0.0
 rasterio==1.3.10 # CRITICAL: Requires GDAL system dependency matching the wheel or build env
 numpy==1.26.4
 shapely==2.0.4 # CRITICAL: Requires GEOS system dependency matching the wheel or build env
 matplotlib==3.8.4
+Pillow>=9.0.0 # Added for image manipulation
 openai==1.23.6
 requests==2.31.0 # Potentially used by underlying libs or for testing
-aiohttp==3.9.5 # Used by azure-storage-blob async client
+# aiohttp==3.9.5 # Keep commented unless explicitly needed; async SDKs use httpx
 python-dotenv==1.0.1 # For local settings
 
 # Testing Dependencies
