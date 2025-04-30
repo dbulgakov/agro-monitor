@@ -1,4 +1,5 @@
 config:
   azure-native:location: westeurope
-  azure-fastapi-demo:gitRepoUrl: https://github.com/dbulgakov/agro-monitor.git
-  azure-fastapi-demo:gitBranch: master
+  azure-fastapi-demo:gitRepoUrl: https://github.com/dbulgakov/agro-monitor-main
+  azure-fastapi-demo:gitBranch: main
+  azure-fastapi-demo:openaiApiKey: key
