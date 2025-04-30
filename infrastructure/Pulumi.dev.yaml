@@ -1,0 +1,5 @@
+config:
+  azure-native:location: westeurope
+  # Add your Git repository details here
+  azure-fastapi-demo:gitRepoUrl: https://github.com/your-username/your-repo.git # Replace with your actual Git repo URL
+  azure-fastapi-demo:gitBranch: main # Replace with your deployment branch (e.g., main, master) 
