@@ -15,8 +15,17 @@ async def test_analyze_invalid_payload(client):
     assert response.status_code == 422
 
 async def test_progress_for_nonexistent_job(client):
-    response = await client.get("/api/progress/nonexistent-job")
-    assert response.status_code in {200, 404}
+    try:
+        async with asyncio.timeout(5):
+            async with client.stream("GET", "/api/progress/nonexistent-job") as response:
+                assert response.status_code in {200, 404}
+                async for line in response.aiter_lines():
+                    if line.startswith("data:"):
+                        data = json.loads(line[5:])
+                        if "status" in data and data["status"] in ["PENDING", "FAILED"]:
+                            break
+    except asyncio.TimeoutError:
+        pytest.fail("Progress check timed out")
 
 async def test_report_for_nonexistent_job(client):
     response = await client.get("/api/report/nonexistent-job")

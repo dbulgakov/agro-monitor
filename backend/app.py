@@ -13,23 +13,21 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # STARTUP
     conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not conn_str:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING must be set")
     app.state.blob_service_client = AsyncBlobServiceClient.from_connection_string(conn_str)
     app.state.queue_service_client = AsyncQueueServiceClient.from_connection_string(conn_str)
     yield
-    # SHUTDOWN
     await app.state.blob_service_client.close()
     await app.state.queue_service_client.close()
 
 app = FastAPI(
     title="Agro Monitor Backend API",
-    description="API для получения и анализа данных сельскохозяйственных полей. Включает SSE для отслеживания прогресса задач.",
+    description="API for retrieving and analyzing agricultural field data. Includes SSE for tracking task progress.",
     version="1.0.0",
     root_path="/api",
-    servers=[{"url": "/api", "description": "Локальный или прокси-сервер"}],
+    servers=[{"url": "/api", "description": "Local or proxy server"}],
     lifespan=lifespan,
 )
 

@@ -15,7 +15,7 @@ router = APIRouter(tags=["Report"])
 def get_blob_service_client():
     conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not conn:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage configuration error")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage configuration error: AZURE_STORAGE_CONNECTION_STRING environment variable is not set")
     return BlobServiceClient.from_connection_string(conn)
 
 @router.get(
@@ -23,13 +23,13 @@ def get_blob_service_client():
     response_model=ReportData,
     operation_id="getReport",
     responses={
-        200: {"description": "Успешный ответ с данными отчета", "model": ReportData},
-        404: {"description": "Отчет не найден", "model": ErrorResponse},
-        500: {"description": "Внутренняя ошибка сервера", "model": ErrorResponse},
+        200: {"description": "Successfully retrieved report data", "model": ReportData},
+        404: {"description": "Report not found", "model": ErrorResponse},
+        500: {"description": "Internal server error", "model": ErrorResponse},
     },
 )
 def get_report(
-    job_id: str = Path(..., description="ID задачи, полученный при запуске анализа"),
+    job_id: str = Path(..., description="Task ID received when starting analysis"),
     _: None = Depends(lambda: check_environment_variables(get_required_env_vars("report"))),
     client: BlobServiceClient = Depends(get_blob_service_client)
 ):
@@ -41,7 +41,7 @@ def get_report(
         upd = ProgressUpdate.model_validate_json(data)
         status_val = upd.status
     except (ResourceNotFoundError, ValidationError):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 

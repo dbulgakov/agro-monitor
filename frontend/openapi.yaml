@@ -2,15 +2,15 @@ openapi: 3.1.0
 info:
   title: Agro Monitor Backend API
   version: 1.0.0
-  description: API для получения и анализа данных сельскохозяйственных полей. Включает SSE для отслеживания прогресса задач.
+  description: API for retrieving and analyzing agricultural field data. Includes SSE for tracking task progress.
 servers:
-  - url: /api # Используется относительный URL, который будет разрешен фронтендом или прокси
-    description: Локальный или прокси-сервер
+  - url: /api
+    description: Local or proxy server
 
 paths:
   /analyze:
     post:
-      summary: Запустить новый анализ поля
+      summary: Start new field analysis
       operationId: startAnalysis
       tags:
         - Analysis
@@ -22,19 +22,19 @@ paths:
               $ref: '#/components/schemas/StartAnalysisPayload'
       responses:
         '200':
-          description: Анализ успешно запущен
+          description: Analysis successfully started
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/StartAnalysisResponse'
         '400':
-          description: Неверные параметры запроса
+          description: Invalid request parameters
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Внутренняя ошибка сервера
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -42,7 +42,7 @@ paths:
 
   /report/{jobId}:
     get:
-      summary: Получить отчет по ID задачи
+      summary: Get report by task ID
       operationId: getReport
       tags:
         - Report
@@ -50,24 +50,24 @@ paths:
         - name: jobId
           in: path
           required: true
-          description: ID задачи, полученный при запуске анализа
+          description: Task ID received when starting analysis
           schema:
             type: string
       responses:
         '200':
-          description: Успешный ответ с данными отчета
+          description: Successfully retrieved report data
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReportData'
         '404':
-          description: Отчет не найден
+          description: Report not found
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Внутренняя ошибка сервера
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -75,7 +75,7 @@ paths:
 
   /progress/{jobId}:
     get:
-      summary: Подписаться на обновления прогресса задачи (SSE)
+      summary: Subscribe to task progress updates (SSE)
       operationId: subscribeProgress
       tags:
         - Progress
@@ -84,35 +84,33 @@ paths:
         - name: jobId
           in: path
           required: true
-          description: ID задачи для отслеживания прогресса
+          description: Task ID for progress tracking
           schema:
             type: string
       responses:
         '200':
-          description: Успешная подписка на поток событий. События будут отправляться в формате text/event-stream. Каждое событие (кроме комментариев) будет содержать JSON объект JobProgress в поле 'data'.
+          description: Successfully subscribed to event stream. Events will be sent in text/event-stream format. Each event (except comments) will contain a JobProgress JSON object in the 'data' field.
           content:
-            text/event-stream: # Указываем тип контента для SSE
+            text/event-stream:
               schema:
-                # Хотя SSE не имеет строгой схемы в OpenAPI, мы можем указать, что ожидаем
-                # поток событий, где каждое сообщение содержит JobProgress
                 type: string
                 description: |
-                  Поток Server-Sent Events.
-                  Каждое сообщение (event):
+                  Server-Sent Events stream.
+                  Each message (event):
                   ```
-                  data: {"progress": 50, "statusMessage": "Обработка данных...", "isComplete": false, "error": null}
+                  data: {"progress": 50, "statusMessage": "Processing data...", "isComplete": false, "error": null}
 
                   ```
-                  Сообщения могут содержать поле `event: <имя_события>` если нужно различать типы событий, но в данном случае используется стандартное `message`.
-                  Поток завершается, когда `isComplete` равно `true` или `error` не равно `null`.
+                  Messages may contain an `event: <event_name>` field if needed to distinguish event types, but in this case the standard `message` is used.
+                  The stream ends when `isComplete` is `true` or `error` is not `null`.
         '404':
-          description: Задача не найдена
+          description: Task not found
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Внутренняя ошибка сервера при инициализации SSE
+          description: Internal server error during SSE initialization
           content:
             application/json:
               schema:
@@ -179,8 +177,8 @@ components:
                     type: number
                   minItems: 2
                   maxItems: 2
-                minItems: 4 # Минимум 4 точки для полигона (3 вершины + замыкающая)
-              description: "Массив колец координат, первое - внешнее. [[lon1, lat1], [lon2, lat2], ...]"
+                minItems: 4
+              description: "Array of coordinate rings, first is exterior. [[lon1, lat1], [lon2, lat2], ...]"
         properties:
           type: object
           additionalProperties: true

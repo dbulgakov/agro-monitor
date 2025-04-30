@@ -29,9 +29,9 @@ async def get_blob_service_client(request: Request) -> BlobServiceClient:
     status_code=status.HTTP_202_ACCEPTED,
     operation_id="startAnalysis",
     responses={
-        202: {"description": "Задача принята в обработку", "model": StartAnalysisResponse},
-        400: {"description": "Неверные параметры запроса", "model": ErrorResponse},
-        500: {"description": "Внутренняя ошибка сервера", "model": ErrorResponse},
+        202: {"description": "Task accepted for processing", "model": StartAnalysisResponse},
+        400: {"description": "Invalid request parameters", "model": ErrorResponse},
+        500: {"description": "Internal server error", "model": ErrorResponse},
     },
 )
 async def start_analysis(

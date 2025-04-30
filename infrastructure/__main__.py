@@ -144,6 +144,8 @@ func_app = web.WebApp(
             web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=analysis_queue.name),
             web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value=reports_container.name),
             web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value=images_container.name),
+            web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
+            web.NameValuePairArgs(name="PROJECT", value="backend"),
         ],
         always_on=False
     ),
