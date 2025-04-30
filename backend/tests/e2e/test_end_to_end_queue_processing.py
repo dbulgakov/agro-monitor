@@ -33,9 +33,9 @@ def stub_external_services(monkeypatch):
 
     # Stub OpenAI recommendation generator
     async def fake_generate_openai_recommendations(job_id, ndvi, mask, crop_type):
-        return ["Mocked recommendation"]
+        return "Mocked recommendation"
     monkeypatch.setattr(
-        "functions.lib.helpers.openai_helpers.generate_openai_recommendations",
+        "functions.process_analysis_job.main.generate_openai_recommendations",
         fake_generate_openai_recommendations,
     )
 
@@ -74,8 +74,8 @@ async def test_queue_processing_end_to_end(
     dummy_msg = DummyMsg(raw_message)
     await process_analysis(dummy_msg)
 
-    # 4. Wait briefly for blob write
-    await asyncio.sleep(1)
+    # 4. Wait briefly for blob write (increase wait time)
+    await asyncio.sleep(2)
 
     # 5. Check if blob report was created
     blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")

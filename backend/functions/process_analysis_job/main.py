@@ -1,7 +1,7 @@
 import logging
 import io
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict
 
 import numpy as np
@@ -113,7 +113,7 @@ async def process_analysis(msg: func.QueueMessage):
                 jobId=job_id,
                 status=JobStatus.COMPLETED,
                 requestPayload=payload.model_dump(),
-                reportTimestamp=datetime.utcnow().isoformat(),
+                reportTimestamp=datetime.now(timezone.utc).isoformat(),
                 ndviStatistics=stats,
                 mapUrls={'ndvi': ndvi_url, 'rgb': rgb_url},
                 recommendations=recs,

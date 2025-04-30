@@ -28,7 +28,7 @@ app = FastAPI(
     title="Agro Monitor Backend API",
     description="API для получения и анализа данных сельскохозяйственных полей. Включает SSE для отслеживания прогресса задач.",
     version="1.0.0",
-    openapi_prefix="/api",
+    root_path="/api",
     servers=[{"url": "/api", "description": "Локальный или прокси-сервер"}],
     lifespan=lifespan,
 )
