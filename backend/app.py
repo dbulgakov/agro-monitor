@@ -1,5 +1,6 @@
 import logging
 import os
+import azure.functions as func
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
@@ -22,19 +23,20 @@ async def lifespan(app: FastAPI):
     await app.state.blob_service_client.close()
     await app.state.queue_service_client.close()
 
-app = FastAPI(
+fastapi_app = FastAPI(
     title="Agro Monitor Backend API",
-    description="API for retrieving and analyzing agricultural field data. Includes SSE for tracking task progress.",
+    description="API for retrieving and analyzing agricultural field data",
     version="1.0.0",
-    root_path="/api",
-    servers=[{"url": "/api", "description": "Local or proxy server"}],
     lifespan=lifespan,
 )
 
-app.include_router(analysis_router, prefix="/analyze")
-app.include_router(report_router, prefix="/report")
-app.include_router(progress_router, prefix="/progress")
+fastapi_app.include_router(analysis_router, prefix="/analyze")
+fastapi_app.include_router(report_router, prefix="/report")
+fastapi_app.include_router(progress_router, prefix="/progress")
 
-@app.get("/", include_in_schema=False)
+@fastapi_app.get("/", include_in_schema=False)
 async def read_root():
-    return {"message": "Welcome to AgroMonitor API v2 (Docker)"}
+    return {"message": "Welcome to AgroMonitor API"}
+
+# Wrap FastAPI app with Azure Functions
+app = func.AsgiFunctionApp(app=fastapi_app, http_auth_level=func.AuthLevel.ANONYMOUS)
