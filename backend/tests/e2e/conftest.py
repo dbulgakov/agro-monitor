@@ -34,6 +34,10 @@ def analysis_queue_name():
     return os.getenv("ANALYSIS_QUEUE_NAME", "analysis-queue")
 
 @pytest.fixture(scope="session")
+def images_container_name():
+    return os.getenv("IMAGES_CONTAINER_NAME", "images")
+
+@pytest.fixture(scope="session")
 def reports_container_name():
     return os.getenv("REPORTS_CONTAINER_NAME", "reports-container")
 
@@ -64,8 +68,23 @@ async def reports_container_client(blob_service_client, reports_container_name):
         pass
 
 @pytest.fixture(scope="function")
-async def client(blob_service_client):
+async def images_container_client(blob_service_client, images_container_name):
+    """Creates and deletes the images container for each test."""
+    cc = blob_service_client.get_container_client(images_container_name)
+    try:
+        await cc.create_container()
+    except ResourceExistsError:
+        pass
+    yield cc
+    try:
+        await cc.delete_container()
+    except ResourceNotFoundError:
+        pass
+
+@pytest.fixture(scope="function")
+async def client(blob_service_client, queue_service_client):
     from app import app
     app.state.blob_service_client = blob_service_client
+    app.state.queue_service_client = queue_service_client
     async with AsyncClient(app=app, base_url="http://testserver") as ac:
         yield ac

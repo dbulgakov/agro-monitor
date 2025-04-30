@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 from fastapi import status
-from functions.lib.schemas import JobStatus
+from functions.lib.schemas import JobStatus, ReportData, ProgressUpdate
 from functions.process_analysis_job.main import process_analysis
 
 class DummyMsg:
@@ -43,7 +43,7 @@ async def test_queue_processing_end_to_end(
     client,
     analysis_queue_client,
     reports_container_client,
-    reports_container_name,
+    images_container_client,
     blob_service_client,
 ):
     # 1. Initiate analysis
@@ -64,27 +64,68 @@ async def test_queue_processing_end_to_end(
     response = await client.post("/api/analyze", json=test_payload)
     assert response.status_code == status.HTTP_202_ACCEPTED
     job_id = response.json()["jobId"]
+    assert job_id is not None
 
     # 2. Get message from queue
-    messages = [m async for m in analysis_queue_client.receive_messages(max_messages=1)]
-    assert messages, "Expected a message in the analysis queue"
-    raw_message = messages[0].content
+    messages = []
+    for _ in range(5):
+        messages = [m async for m in analysis_queue_client.receive_messages(max_messages=1, visibility_timeout=5)]
+        if messages:
+            break
+        await asyncio.sleep(0.5)
+    assert messages, "Expected a message in the analysis queue after retries"
+    message = messages[0]
+    raw_message = message.content
 
     # 3. Process the job
     dummy_msg = DummyMsg(raw_message)
-    await process_analysis(dummy_msg)
+    await process_analysis(dummy_msg, blob_service_client)
 
-    # 4. Wait briefly for blob write (increase wait time)
-    await asyncio.sleep(2)
+    # 4. Wait briefly for blob writes
+    await asyncio.sleep(2) 
 
-    # 5. Check if blob report was created
-    blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
-    props = await blob_client.get_blob_properties()
-    assert props is not None
+    # 5. Verify report blob content
+    report_blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
+    assert await report_blob_client.exists(), "Report blob should exist"
+    report_content = await (await report_blob_client.download_blob()).readall()
+    report_data = ReportData.model_validate_json(report_content)
+    assert report_data.jobId == job_id
+    assert report_data.status == JobStatus.COMPLETED
+    assert report_data.requestPayload.model_dump(exclude_none=True) == test_payload
+    assert report_data.ndviStatistics is not None
+    assert report_data.recommendations == "Mocked recommendation"
+    assert report_data.mapUrls is not None
+    assert "ndvi" in report_data.mapUrls
+    assert report_data.mapUrls["ndvi"] is not None
 
-    # 6. Retrieve report via API
+    # 6. Verify image blob existence and properties
+    ndvi_image_blob_client = images_container_client.get_blob_client(f"{job_id}/ndvi_map.png")
+    assert await ndvi_image_blob_client.exists(), "NDVI image blob should exist"
+    ndvi_props = await ndvi_image_blob_client.get_blob_properties()
+    assert ndvi_props.size > 0
+    assert ndvi_props.content_settings.content_type == "image/png"
+
+
+    # 7. Verify status blob content
+    status_blob_client = reports_container_client.get_blob_client(f"{job_id}/status.json")
+    assert await status_blob_client.exists(), "Status blob should exist"
+    status_content = await (await status_blob_client.download_blob()).readall()
+    status_data = ProgressUpdate.model_validate_json(status_content)
+    assert status_data.jobId == job_id
+    assert status_data.status == JobStatus.COMPLETED
+    assert status_data.progress == 100
+    assert status_data.message == "Analysis complete"
+
+    # 8. Verify message is deleted from queue
+    await analysis_queue_client.delete_message(message)
+    await asyncio.sleep(1)
+    messages_after = [m async for m in analysis_queue_client.receive_messages(max_messages=1)]
+    assert not messages_after, "Message should be deleted from the queue"
+
+    # 9. Retrieve report via API
     report_resp = await client.get(f"/api/report/{job_id}")
     assert report_resp.status_code == status.HTTP_200_OK
-    data = report_resp.json()
-    assert data["status"] == JobStatus.COMPLETED.value
-    assert "recommendations" in data
+    api_data = report_resp.json()
+    assert api_data["status"] == JobStatus.COMPLETED.value
+    assert api_data["jobId"] == job_id
+    assert "recommendations" in api_data
