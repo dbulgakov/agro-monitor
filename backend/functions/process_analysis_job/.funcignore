@@ -1,0 +1,10 @@
+.git*
+.vscode
+.idea
+__pycache__
+*.pyc
+*.pyo
+local.settings.json
+.env
+functions/shared_code 
+.venv
