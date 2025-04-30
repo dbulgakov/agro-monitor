@@ -6,9 +6,9 @@ import pulumi_azure_native.web as web
 import pulumi_azure_native.documentdb as documentdb
 
 config = pulumi.Config()
-location = config.require("azure-native:location")
-git_repo_url = config.require("azure-fastapi-demo:gitRepoUrl")
-git_branch = config.require("azure-fastapi-demo:gitBranch")
+location       = config.require("azure-native:location")
+git_repo_url   = config.require("azure-fastapi-demo:gitRepoUrl")
+git_branch     = config.require("azure-fastapi-demo:gitBranch")
 openai_api_key = config.require("azure-fastapi-demo:openaiApiKey")
 
 base_name = "fastapidemo"
@@ -93,13 +93,15 @@ func_app = web.WebApp(f"{base_name}-func-app-{pulumi.get_stack()}",
     site_config=web.SiteConfigArgs(
         linux_fx_version="Python|3.11",
         app_settings=[
-            web.NameValuePairArgs(name="AzureWebJobsStorage", value=storage_conn),
-            web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
-            web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
-            web.NameValuePairArgs(name="APPINSIGHTS_INSTRUMENTATIONKEY", value=ai.instrumentation_key),
-            web.NameValuePairArgs(name="COSMOSDB_CONNECTION_STRING", value=cosmos_conn),
+            web.NameValuePairArgs(name="AzureWebJobsStorage",             value=storage_conn),
+            web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME",        value="python"),
+            web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION",     value="~4"),
+            web.NameValuePairArgs(name="APPINSIGHTS_INSTRUMENTATIONKEY",  value=ai.instrumentation_key),
+            web.NameValuePairArgs(name="COSMOSDB_CONNECTION_STRING",      value=cosmos_conn),
             web.NameValuePairArgs(name="AZURE_STORAGE_CONNECTION_STRING", value=storage_conn),
-            web.NameValuePairArgs(name="OPENAI_API_KEY", value=openai_api_key),
+            web.NameValuePairArgs(name="OPENAI_API_KEY",                  value=openai_api_key),
+            web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME",            value="analysis-requests"),
+            web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME",         value="reports"),
         ],
     ),
     https_only=True,
@@ -135,11 +137,11 @@ web_app = web.WebApp(f"{base_name}-web-app-{pulumi.get_stack()}",
         linux_fx_version="NODE|18-lts",
         app_settings=[
             web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
-            web.NameValuePairArgs(name="WEBSITE_NODE_DEFAULT_VERSION", value="~18"),
-            web.NameValuePairArgs(name="PROJECT", value="frontend"),
+            web.NameValuePairArgs(name="WEBSITE_NODE_DEFAULT_VERSION",   value="~18"),
+            web.NameValuePairArgs(name="PROJECT",                        value="frontend"),
             web.NameValuePairArgs(
                 name="NEXT_PUBLIC_API_URL",
-                value=func_app.default_host_name.apply(lambda host: f"https://{host}/api")
+                value=func_app.default_host_name.apply(lambda h: f"https://{h}/api")
             ),
         ],
         startup_command="npm run start",
@@ -160,9 +162,3 @@ web.WebAppSourceControl("frontend-sc",
 
 pulumi.export("backend_endpoint", func_app.default_host_name.apply(lambda h: f"https://{h}/api"))
 pulumi.export("frontend_endpoint", web_app.default_host_name.apply(lambda h: f"https://{h}"))
-pulumi.export("resource_group", rg.name)
-pulumi.export("storage_account", sa.name)
-pulumi.export("cosmos_account", cosmos_account.name)
-pulumi.export("cosmos_database", cosmos_db.name)
-pulumi.export("func_app_name", func_app.name)
-pulumi.export("web_app_name", web_app.name)
