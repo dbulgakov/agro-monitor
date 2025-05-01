@@ -99,6 +99,7 @@ front_app = web.WebApp(
         app_command_line="node server.js",
         app_settings=[
             web.NameValuePairArgs(name="NEXT_PUBLIC_API_URL", value=backend_api_url),
+            web.NameValuePairArgs(name="WEBSITE_RUN_FROM_PACKAGE", value="1"),
         ]
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
