@@ -13,6 +13,7 @@ from PIL import Image
 import azure.functions as func
 from azure.storage.blob.aio import BlobServiceClient
 from azure.storage.blob import ContentSettings
+import aiohttp
 
 from shared_code.helpers.job_status import update_job_status, get_job_status
 from shared_code.helpers.openai_helpers import generate_openai_recommendations
@@ -138,17 +139,20 @@ async def read_bands(job_id: str, urls: Dict[str, str]) -> (np.ndarray, np.ndarr
     await update_status(get_client(), job_id, JobStatus.PROCESSING, 20, "Завантаження знімків")
     logger.info("Читання знімків NIR, RED, RGB")
 
-    nir_task = read_band(job_id, urls['nir'])
-    red_task = read_band(job_id, urls['red'])
-    rgb_task = read_rgb(job_id, urls.get('visual', ''))
+    async with aiohttp.ClientSession() as session:
+        nir_task = read_band(job_id, urls['nir'], session=session)
+        red_task = read_band(job_id, urls['red'], session=session)
+        rgb_task = read_rgb(job_id, urls.get('visual', ''), session=session)
 
-    try:
-        results = await asyncio.wait_for(
-            asyncio.gather(nir_task, red_task, rgb_task, return_exceptions=True),
-            timeout=120,
-        )
-    except asyncio.TimeoutError:
-        raise RuntimeError("Читання знімків перевищило таймаут (120 сек)")
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(nir_task, red_task, rgb_task, return_exceptions=True),
+                timeout=120,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError("Читання знімків перевищило таймаут (120 сек)")
+        finally:
+            pass
 
     nir, red, rgb = results
     error_messages = []

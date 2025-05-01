@@ -41,16 +41,24 @@ def _sync_read_band_from_bytes(data: bytes) -> np.ndarray:
         with memfile.open() as dataset:
             return dataset.read(1).astype(np.float32)
 
-async def read_band(job_id: str, url: str) -> np.ndarray:
+async def read_band(job_id: str, url: str, session: Optional[aiohttp.ClientSession] = None) -> np.ndarray:
     log_adapter = logging.getLogger(__name__).getChild(job_id)
-    async with aiohttp.ClientSession() as session:
-        band_data = await _download_data(session, url, log_adapter)
-    try:
-        # Run rasterio reading in a separate thread
-        return await asyncio.to_thread(_sync_read_band_from_bytes, band_data)
-    except Exception as e:
-        log_adapter.error(f"Помилка обробки даних каналу (після завантаження) з {url[:100]}...: {e}", exc_info=True)
-        raise RuntimeError(f"Error processing band data from {url[:100]}...") from e
+    
+    async def _read(sess: aiohttp.ClientSession):
+        band_data = await _download_data(sess, url, log_adapter)
+        try:
+            # Run rasterio reading in a separate thread
+            return await asyncio.to_thread(_sync_read_band_from_bytes, band_data)
+        except Exception as e:
+            log_adapter.error(f"Помилка обробки даних каналу (після завантаження) з {url[:100]}...: {e}", exc_info=True)
+            raise RuntimeError(f"Error processing band data from {url[:100]}...") from e
+
+    if session:
+        return await _read(session)
+    else:
+        async with aiohttp.ClientSession() as local_session:
+            return await _read(local_session)
+
 
 def _sync_read_rgb_from_bytes(data: bytes) -> np.ndarray:
     # This part still runs in a thread
@@ -72,41 +80,47 @@ def _sync_read_rgb_from_bytes(data: bytes) -> np.ndarray:
                 img_gray_rgb = np.stack([band1, band1, band1], axis=0).astype(np.float32)
                 return img_gray_rgb
 
-async def read_rgb(job_id: str, url: str) -> Optional[np.ndarray]: # Return Optional
+async def read_rgb(job_id: str, url: str, session: Optional[aiohttp.ClientSession] = None) -> Optional[np.ndarray]: # Return Optional
     log_adapter = logging.getLogger(__name__).getChild(job_id)
     if not url:
         log_adapter.warning("Немає URL для RGB знімку, пропуск читання.")
         return None # Return None if no URL is provided
 
-    async with aiohttp.ClientSession() as session:
+    async def _read(sess: aiohttp.ClientSession):
         try:
-            rgb_data = await _download_data(session, url, log_adapter)
+            rgb_data = await _download_data(sess, url, log_adapter)
         except RuntimeError:
              # Logged in _download_data, return None if download fails
              log_adapter.warning(f"Не вдалося завантажити RGB з {url[:100]}..., обробка продовжиться без нього.")
              return None
 
-    try:
-        # Run rasterio reading in a separate thread
-        rgb_array = await asyncio.to_thread(_sync_read_rgb_from_bytes, rgb_data)
-        # Transpose from (bands, height, width) to (height, width, bands) expected by PIL
-        # Do transposition here instead of _sync function to keep raw read data simpler
-        if rgb_array.ndim == 3 and rgb_array.shape[0] == 3:
-             return np.transpose(rgb_array, (1, 2, 0))
-        else:
-             # This case might occur if _sync_read_rgb_from_bytes adapted grayscale
-             # Ensure shape is (height, width, bands) even for grayscale adapted
-             if rgb_array.ndim == 3 and rgb_array.shape[0] == 1: # Single band returned
-                  temp_rgb = np.stack([rgb_array[0]]*3, axis=-1) # Create (H, W, 3)
-                  return temp_rgb
-             elif rgb_array.ndim == 2: # Pure grayscale returned somehow?
-                  temp_rgb = np.stack([rgb_array]*3, axis=-1) # Create (H, W, 3)
-                  return temp_rgb
-             else:
-                  log_adapter.error(f"Неочікувана форма масиву RGB після читання: {rgb_array.shape}")
-                  return None # Cannot proceed with unexpected shape
+        try:
+            # Run rasterio reading in a separate thread
+            rgb_array = await asyncio.to_thread(_sync_read_rgb_from_bytes, rgb_data)
+            # Transpose from (bands, height, width) to (height, width, bands) expected by PIL
+            # Do transposition here instead of _sync function to keep raw read data simpler
+            if rgb_array.ndim == 3 and rgb_array.shape[0] == 3:
+                 return np.transpose(rgb_array, (1, 2, 0))
+            else:
+                 # This case might occur if _sync_read_rgb_from_bytes adapted grayscale
+                 # Ensure shape is (height, width, bands) even for grayscale adapted
+                 if rgb_array.ndim == 3 and rgb_array.shape[0] == 1: # Single band returned
+                      temp_rgb = np.stack([rgb_array[0]]*3, axis=-1) # Create (H, W, 3)
+                      return temp_rgb
+                 elif rgb_array.ndim == 2: # Pure grayscale returned somehow?
+                      temp_rgb = np.stack([rgb_array]*3, axis=-1) # Create (H, W, 3)
+                      return temp_rgb
+                 else:
+                      log_adapter.error(f"Неочікувана форма масиву RGB після читання: {rgb_array.shape}")
+                      return None # Cannot proceed with unexpected shape
 
-    except Exception as e:
-        log_adapter.error(f"Помилка обробки RGB даних (після завантаження) з {url[:100]}...: {e}", exc_info=True)
-        # Return None if processing fails, as RGB is often optional
-        return None
+        except Exception as e:
+            log_adapter.error(f"Помилка обробки RGB даних (після завантаження) з {url[:100]}...: {e}", exc_info=True)
+            # Return None if processing fails, as RGB is often optional
+            return None
+
+    if session:
+        return await _read(session)
+    else:
+        async with aiohttp.ClientSession() as local_session:
+            return await _read(local_session)
