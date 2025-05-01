@@ -85,6 +85,9 @@ front_plan = web.AppServicePlan(
     reserved=True,
 )
 
+# Construct the backend API URL
+backend_api_url = func_app.default_host_name.apply(lambda h: f"https://{h}")
+
 front_app = web.WebApp(
     "frontend",
     resource_group_name=rg.name,
@@ -94,11 +97,15 @@ front_app = web.WebApp(
     site_config=web.SiteConfigArgs(
         linux_fx_version="NODE|18-lts",
         app_command_line="node server.js",
+        app_settings=[
+            web.NameValuePairArgs(name="NEXT_PUBLIC_API_URL", value=backend_api_url),
+            # Add other frontend-specific environment variables here if needed
+        ]
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
 )
 
-pulumi.export("function_app_endpoint", func_app.default_host_name.apply(lambda h: f"https://{h}"))
+pulumi.export("function_app_endpoint", backend_api_url)
 pulumi.export("frontend_endpoint", front_app.default_host_name.apply(lambda h: f"https://{h}"))
 pulumi.export("storage_account_name", sa.name)
 pulumi.export("analysis_queue_name", queue.name)
