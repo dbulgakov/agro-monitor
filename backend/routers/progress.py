@@ -27,10 +27,8 @@ async def progress_event_generator(job_id: str, request: Request):
     blob_client = await get_blob_client(job_id)
     last = None
     interval = float(os.getenv("PROGRESS_CHECK_INTERVAL_SECONDS", "5"))
-    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "60"))
+    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "60"))  # Increased from 5 to 60 (5 minutes with 5s interval)
     check_count = 0
-    last_sent_time = time.time()
-    keep_alive_interval = 30 # seconds
     
     logger.info(f"Starting progress monitoring for job {job_id}")
     
@@ -41,12 +39,9 @@ async def progress_event_generator(job_id: str, request: Request):
             
         if check_count >= max_checks:
             logger.warning(f"Progress check timeout for job {job_id} after {check_count} attempts")
-            yield f"data: {json.dumps({'message': f'Progress check timeout after {max_checks * interval} seconds', 'error': True, 'isComplete': True})}
-
-"
+            yield f"event: timeout\ndata: {json.dumps({'message': f'Progress check timeout after {max_checks * interval} seconds'})}\n\n"
             break
             
-        payload = None # Initialize payload for the current iteration
         try:
             if await blob_client.exists():
                 data = await (await blob_client.download_blob()).readall()
@@ -55,7 +50,6 @@ async def progress_event_generator(job_id: str, request: Request):
                 logger.debug(f"Progress update for job {job_id}: {payload}")
             else:
                 if check_count == 0:
-                    # Send initial PENDING status if blob doesn't exist yet
                     payload = ProgressUpdate(
                         jobId=job_id,
                         status=JobStatus.PENDING,
@@ -63,37 +57,22 @@ async def progress_event_generator(job_id: str, request: Request):
                         message="Analysis request received",
                         timestamp=time.time()
                     ).model_dump()
-                    s = json.dumps(payload)
-                    # Removed event tag
-                    yield f"data: {s}\n\n"
-                    last = s
-                    last_sent_time = time.time()
-                # Don't break immediately, keep checking for a while
-                # break # Removed break
-
+                    yield f"event: progress\ndata: {json.dumps(payload)}\n\n"
+                break
         except Exception as e:
             logger.error(f"Error checking progress for job {job_id}: {str(e)}")
-            err = ErrorResponse(message=str(e), error=True, isComplete=True).model_dump()
-            # Removed event tag
-            yield f"data: {json.dumps(err)}\n\n"
+            err = ErrorResponse(message=str(e)).model_dump()
+            yield f"event: error\ndata: {json.dumps(err)}\n\n"
             break
 
-        if payload: # Only yield if we have a payload for this iteration
-            s = json.dumps(payload)
-            if s != last:
-                # Removed event tag
-                yield f"data: {s}\n\n"
-                last = s
-                last_sent_time = time.time()
-                if payload["status"] in (JobStatus.COMPLETED, JobStatus.FAILED):
-                    logger.info(f"Job {job_id} completed with status {payload['status']}")
-                    break
-        
-        # Send keep-alive if needed
-        if time.time() - last_sent_time > keep_alive_interval:
-            yield ":keep-alive\n\n"
-            last_sent_time = time.time()
-            logger.debug(f"Sent keep-alive for job {job_id}")
+        s = json.dumps(payload)
+        if s != last:
+            event_type = "complete" if payload["status"] in (JobStatus.COMPLETED, JobStatus.FAILED) else "progress"
+            yield f"event: {event_type}\ndata: {s}\n\n"
+            last = s
+            if event_type == "complete":
+                logger.info(f"Job {job_id} completed with status {payload['status']}")
+                break
 
         check_count += 1
         await asyncio.sleep(interval)
