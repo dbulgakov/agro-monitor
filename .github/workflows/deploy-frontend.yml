@@ -25,6 +25,15 @@ jobs:
           npm ci --legacy-peer-deps
           npm run build
 
+      - name: Bundle static assets for standalone
+        run: |
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+          if [ -d "public" ]; then
+            cp -R public .next/standalone/public
+          fi
+        working-directory: frontend
+
       - name: Azure Login
         uses: azure/login@v1
         with:
