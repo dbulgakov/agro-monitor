@@ -24,6 +24,20 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: 'Login via Azure CLI'
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 'Set AzureWebJobsStorage App Setting'
+        run: |
+          connection_string=$(az storage account show-connection-string --name ${{ secrets.STORAGE_ACCOUNT_NAME }} --query connectionString -o tsv)
+          az functionapp config appsettings set --name ${{ secrets.FUNC_API_APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP_NAME }} --settings AzureWebJobsStorage=$connection_string
+        env:
+          STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }} # Need storage account name
+          FUNC_API_APP_NAME: ${{ secrets.FUNC_API_APP_NAME }}
+          RESOURCE_GROUP_NAME: ${{ secrets.RESOURCE_GROUP_NAME }} # Need resource group name
+
       - name: Deploy to Azure Function App
         uses: Azure/functions-action@v1
         with:

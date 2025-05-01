@@ -2,8 +2,7 @@
 
 This project uses Pulumi to deploy the Agro Monitor application to Azure. The infrastructure includes:
 - Azure Function App (Consumption Plan Y1) for the FastAPI backend
-- Azure Web App (Free Tier F1) for the Next.js frontend
-- Azure Cosmos DB (Serverless) for data storage
+- Azure Static Web App (Free SKU) for the Next.js frontend
 - Azure Storage Account for blobs and queues
 - Application Insights for monitoring
 
@@ -44,6 +43,9 @@ pulumi config set azure-fastapi-demo:gitRepoUrl https://github.com/dbulgakov/agr
 pulumi config set azure-fastapi-demo:gitBranch main
 pulumi config set azure-fastapi-demo:openaiApiKey your-openai-api-key
 
+# Optional: If you want Pulumi to automatically set up GitHub integration for the Static Web App, supply a GitHub PAT
+pulumi config set --secret azure-fastapi-demo:repoToken ghp_XXX
+
 az provider register --namespace Microsoft.OperationalInsights
 ```
 
@@ -61,7 +63,7 @@ pulumi up
 
 3. After deployment completes, Pulumi will output the following:
 - Backend endpoint (Function App URL)
-- Frontend endpoint (Web App URL)
+- Frontend endpoint (Static Web App URL)
 - Storage account name
 - Cosmos DB endpoint
 - Queue and container names
