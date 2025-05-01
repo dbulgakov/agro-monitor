@@ -143,7 +143,7 @@ web_app = web.WebApp(
     kind="app,linux",
     reserved=True,
     site_config=web.SiteConfigArgs(
-        linux_fx_version="NODE|18-lts",
+        linux_fx_version="NODE|18",
         app_settings=[
             web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
             web.NameValuePairArgs(name="PROJECT", value="frontend"),
