@@ -1,7 +1,8 @@
 import logging
 import os
 import azure.functions as func
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
 from azure.storage.queue.aio import QueueServiceClient as AsyncQueueServiceClient
@@ -11,6 +12,7 @@ from routers.report import router as report_router
 from routers.progress import router as progress_router
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +31,14 @@ fastapi_app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@fastapi_app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "error": str(exc)}
+    )
 
 fastapi_app.include_router(analysis_router, prefix="/api/analyze")
 fastapi_app.include_router(report_router, prefix="/api/report")
