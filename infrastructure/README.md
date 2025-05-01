@@ -39,8 +39,6 @@ pulumi login
 5. Set configuration values:
 ```bash
 pulumi config set azure-fastapi-demo:location northeurope
-pulumi config set azure-fastapi-demo:gitRepoUrl https://github.com/dbulgakov/agro-monitor
-pulumi config set azure-fastapi-demo:gitBranch main
 pulumi config set azure-fastapi-demo:openaiApiKey your-openai-api-key
 
 # Optional: If you want Pulumi to automatically set up GitHub integration for the Static Web App, supply a GitHub PAT

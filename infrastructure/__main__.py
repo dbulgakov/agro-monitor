@@ -7,8 +7,6 @@ import hashlib
 
 config = pulumi.Config()
 location = config.require("location")
-git_repo_url = config.require("gitRepoUrl")
-git_branch = config.require("gitBranch")
 repo_token = config.get_secret("repoToken")
 
 project, stack = pulumi.get_project(), pulumi.get_stack()
@@ -63,19 +61,7 @@ app_settings = [
     web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value="reports"),
 ]
 
-func_app = web.WebApp(
-    "func-api",
-    resource_group_name=rg.name,
-    location=rg.location,
-    server_farm_id=func_plan.id,
-    kind="functionapp",
-    site_config=web.SiteConfigArgs(
-        app_settings=app_settings,
-        linux_fx_version="Python|3.11",
-    ),
-    identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
-)
-
+# Define the front-end App Service Plan first
 front_plan = web.AppServicePlan(
     "front-plan",
     resource_group_name=rg.name,
@@ -85,9 +71,11 @@ front_plan = web.AppServicePlan(
     reserved=True,
 )
 
-# Construct the backend API URL
-backend_api_url = func_app.default_host_name.apply(lambda h: f"https://{h}")
+# Placeholder for backend URL - will be defined after func_app
+# We need front_app defined to get its hostname for func_app CORS settings
+backend_api_url_output = pulumi.Output.concat("https://", func_app.default_host_name) 
 
+# Define the front-end Web App
 front_app = web.WebApp(
     "frontend",
     resource_group_name=rg.name,
@@ -98,12 +86,35 @@ front_app = web.WebApp(
         linux_fx_version="NODE|18-lts",
         app_command_line="node server.js",
         app_settings=[
-            web.NameValuePairArgs(name="NEXT_PUBLIC_API_URL", value=backend_api_url),
-            # Add other frontend-specific environment variables here if needed
+            # Use the output directly here
+            web.NameValuePairArgs(name="NEXT_PUBLIC_API_URL", value=backend_api_url_output),
         ]
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
 )
+
+# Now get the frontend origin for CORS
+frontend_origin = front_app.default_host_name.apply(lambda h: f"https://{h}")
+
+# Define the function app, using the frontend_origin
+func_app = web.WebApp(
+    "func-api",
+    resource_group_name=rg.name,
+    location=rg.location,
+    server_farm_id=func_plan.id,
+    kind="functionapp",
+    site_config=web.SiteConfigArgs(
+        app_settings=app_settings,
+        linux_fx_version="Python|3.11",
+        cors=web.CorsSettingsArgs(
+            allowed_origins=pulumi.Output.all(frontend_origin).apply(lambda args: [args[0], "http://localhost:3000"]),
+        ),
+    ),
+    identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
+)
+
+# Define the final backend_api_url string based on the func_app output
+backend_api_url = func_app.default_host_name.apply(lambda h: f"https://{h}")
 
 pulumi.export("function_app_endpoint", backend_api_url)
 pulumi.export("frontend_endpoint", front_app.default_host_name.apply(lambda h: f"https://{h}"))

@@ -116,8 +116,6 @@ The Azure infrastructure is managed using Pulumi in the `infrastructure/` direct
     ```bash
     # Example:
     pulumi config set location <your-azure-location>
-    pulumi config set gitRepoUrl <your-github-repo-url>
-    pulumi config set gitBranch main
     # Add other necessary configs...
     ```
 
