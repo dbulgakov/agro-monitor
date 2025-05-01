@@ -1,190 +1,113 @@
 import pulumi
 import pulumi_azure_native.resources as resources
 import pulumi_azure_native.storage as storage
-import pulumi_azure_native.insights as insights
-import pulumi_azure_native.web as web
 import pulumi_azure_native.documentdb as documentdb
-from pulumi import ResourceOptions
+import pulumi_azure_native.web as web
+import pulumi.asset as asset
+import os
 
 config = pulumi.Config()
 location = config.require("location")
 git_repo_url = config.require("gitRepoUrl")
 git_branch = config.require("gitBranch")
-openai_api_key = config.require("openaiApiKey")
 
-retry_policy = ResourceOptions()
-base_name = "agromonitor"
+project, stack = pulumi.get_project(), pulumi.get_stack()
+rg = resources.ResourceGroup(f"{project}-rg-{stack}", location=location)
 
-rg = resources.ResourceGroup(f"{base_name}-rg", location=location, opts=retry_policy)
-
-storage_account = storage.StorageAccount(
-    f"{base_name}sa",
+sa = storage.StorageAccount(
+    "sa",
     resource_group_name=rg.name,
+    location=rg.location,
     sku=storage.SkuArgs(name=storage.SkuName.STANDARD_LRS),
     kind=storage.Kind.STORAGE_V2,
-    location=location,
-    opts=retry_policy,
 )
 
-storage_keys = storage.list_storage_account_keys_output(
+storage.BlobContainer("images", account_name=sa.name, resource_group_name=rg.name, container_name="images")
+storage.BlobContainer("reports", account_name=sa.name, resource_group_name=rg.name, container_name="reports")
+queue = storage.Queue("analysis-requests", account_name=sa.name, resource_group_name=rg.name, queue_name="analysis-requests")
+
+cosmos = documentdb.DatabaseAccount(
+    "cosmos",
     resource_group_name=rg.name,
-    account_name=storage_account.name,
+    location=rg.location,
+    kind=documentdb.DatabaseAccountKind.GLOBAL_DOCUMENT_DB,
+    database_account_offer_type="Standard",
+    locations=[documentdb.LocationArgs(location_name=rg.location, failover_priority=0)],
+    consistency_policy=documentdb.ConsistencyPolicyArgs(default_consistency_level=documentdb.DefaultConsistencyLevel.SESSION),
 )
-primary_storage_key = storage_keys.keys[0].value
-storage_conn = pulumi.Output.all(storage_account.name, primary_storage_key).apply(
-    lambda args: f"DefaultEndpointsProtocol=https;AccountName={args[0]};AccountKey={args[1]};EndpointSuffix=core.windows.net"
-)
-
-analysis_queue = storage.Queue(
-    "analysis-requests",
-    resource_group_name=rg.name,
-    account_name=storage_account.name,
-    queue_name="analysis-requests",
-    opts=retry_policy,
-)
-
-reports_container = storage.BlobContainer(
-    "reports-container",
-    resource_group_name=rg.name,
-    account_name=storage_account.name,
-    container_name="reports",
-    opts=retry_policy,
-)
-
-images_container = storage.BlobContainer(
-    "images-container",
-    resource_group_name=rg.name,
-    account_name=storage_account.name,
-    container_name="images",
-    opts=retry_policy,
-)
-
-ai = insights.Component(
-    f"{base_name}-ai",
-    resource_group_name=rg.name,
-    kind="web",
-    application_type=insights.ApplicationType.WEB,
-    location=location,
-    ingestion_mode="ApplicationInsights",
-    opts=retry_policy,
-)
-
-cosmosdb_account = documentdb.DatabaseAccount(
-    f"{base_name}-cosmos",
-    resource_group_name=rg.name,
-    locations=[documentdb.LocationArgs(location_name=location, failover_priority=0)],
-    kind="GlobalDocumentDB",
-    database_account_offer_type=documentdb.DatabaseAccountOfferType.STANDARD,
-    consistency_policy=documentdb.ConsistencyPolicyArgs(
-        default_consistency_level=documentdb.DefaultConsistencyLevel.SESSION,
-    ),
-    capabilities=[documentdb.CapabilityArgs(name="EnableServerless")],
-    opts=retry_policy,
-)
-
-cosmos_conn_string = cosmosdb_account.name.apply(
-    lambda name: documentdb.list_database_account_connection_strings_output(
-        resource_group_name=rg.name,
-        account_name=name,
-    ).connection_strings[0].connection_string
-)
-
-func_rg = resources.ResourceGroup(f"{base_name}-func-rg", location=location, opts=retry_policy)
 
 func_plan = web.AppServicePlan(
-    f"{base_name}-func-plan",
-    resource_group_name=func_rg.name,
-    kind="FunctionApp",
-    reserved=True,
-    sku=web.SkuDescriptionArgs(tier="Dynamic", name="Y1"),
-    location=location,
-    opts=retry_policy,
-)
-
-fastapi_func_app = web.WebApp(
-    f"{base_name}-func-api",
-    resource_group_name=func_rg.name,
-    location=location,
-    server_farm_id=func_plan.id,
-    kind="functionapp,linux",
-    reserved=True,
-    site_config=web.SiteConfigArgs(
-        linux_fx_version="Python|3.11",
-        app_settings=[
-            web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
-            web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
-            web.NameValuePairArgs(name="AzureWebJobsStorage", value=storage_conn),
-            web.NameValuePairArgs(name="APPINSIGHTS_INSTRUMENTATIONKEY", value=ai.instrumentation_key),
-            web.NameValuePairArgs(name="COSMOSDB_CONNECTION_STRING", value=cosmos_conn_string),
-            web.NameValuePairArgs(name="OPENAI_API_KEY", value=openai_api_key),
-            web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=analysis_queue.name),
-            web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value=reports_container.name),
-            web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value=images_container.name),
-            web.NameValuePairArgs(name="PYTHON_ENABLE_WORKER_EXTENSIONS", value="1"),
-            web.NameValuePairArgs(name="FUNCTIONS_WORKING_DIRECTORY", value="functions"),
-        ]
-    ),
-    https_only=True,
-    opts=retry_policy,
+    "func-plan",
+    resource_group_name=rg.name,
+    location=rg.location,
+    kind="functionapp",
+    sku=web.SkuDescriptionArgs(name="Y1", tier="Dynamic"),
 )
 
 web_plan = web.AppServicePlan(
-    f"{base_name}-web-plan",
+    "web-plan",
     resource_group_name=rg.name,
-    kind="Linux",
+    location=rg.location,
+    kind="app",
     reserved=True,
-    sku=web.SkuDescriptionArgs(tier="Free", name="F1"),
-    location=location,
-    opts=retry_policy,
+    sku=web.SkuDescriptionArgs(name="B1", tier="Basic"),
 )
 
-web_app = web.WebApp(
-    f"{base_name}-web-app",
+def common_settings():
+    return [
+        web.NameValuePairArgs(name="WEBSITES_ENABLE_APP_SERVICE_STORAGE", value="true"),
+        web.NameValuePairArgs(name="AZURE_STORAGE_ACCOUNT", value=sa.name),
+        web.NameValuePairArgs(name="AZURE_COSMOS_ENDPOINT", value=cosmos.document_endpoint),
+        web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
+    ]
+
+func_app = web.WebApp(
+    "func-api",
     resource_group_name=rg.name,
-    location=location,
-    server_farm_id=web_plan.id,
-    kind="app,linux",
-    reserved=True,
+    location=rg.location,
+    server_farm_id=func_plan.id,
+    kind="functionapp",
     site_config=web.SiteConfigArgs(
-        linux_fx_version="NODE|18",
-        app_settings=[
-            web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
-            web.NameValuePairArgs(name="PROJECT", value="frontend"),
-            web.NameValuePairArgs(
-                name="NEXT_PUBLIC_API_URL",
-                value=fastapi_func_app.default_host_name.apply(lambda h: f"https://{h}")
-            ),
-        ],
-        always_on=False,
+        app_settings=[*common_settings(), web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python")]
     ),
-    https_only=True,
-    opts=retry_policy,
+    identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
 )
 
-web.WebAppSourceControl(
-    "backend-sc",
-    name=fastapi_func_app.name,
-    resource_group_name=func_rg.name,
-    repo_url=git_repo_url,
-    branch=git_branch,
-    is_manual_integration=True,
-    opts=ResourceOptions(depends_on=[fastapi_func_app]),
-)
-
-web.WebAppSourceControl(
-    "frontend-sc",
-    name=web_app.name,
+backend_zip = asset.AssetArchive({
+    ".": asset.FileArchive(os.path.join(os.getcwd(), "backend"))
+})
+web.WebAppDeployment(
+    "func-deploy",
+    name=func_app.name,
     resource_group_name=rg.name,
-    repo_url=git_repo_url,
-    branch=git_branch,
-    is_manual_integration=True,
-    opts=ResourceOptions(depends_on=[web_app]),
+    package=backend_zip,
 )
 
-pulumi.export("backend_endpoint", fastapi_func_app.default_host_name.apply(lambda h: f"https://{h}"))
-pulumi.export("frontend_endpoint", web_app.default_host_name.apply(lambda h: f"https://{h}"))
-pulumi.export("storage_account_name", storage_account.name)
-pulumi.export("analysis_queue_name", analysis_queue.name)
-pulumi.export("reports_container_name", reports_container.name)
-pulumi.export("images_container_name", images_container.name)
-pulumi.export("cosmosdb_account_endpoint", cosmosdb_account.document_endpoint)
+frontend_app = web.WebApp(
+    "frontend",
+    resource_group_name=rg.name,
+    location=rg.location,
+    server_farm_id=web_plan.id,
+    site_config=web.SiteConfigArgs(
+        app_settings=[web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true")]
+    ),
+    identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
+)
+
+frontend_zip = asset.AssetArchive({
+    ".": asset.FileArchive(os.path.join(os.getcwd(), "frontend"))
+})
+web.WebAppDeployment(
+    "frontend-deploy",
+    name=frontend_app.name,
+    resource_group_name=rg.name,
+    package=frontend_zip,
+)
+
+pulumi.export("backend_endpoint", func_app.default_host_name.apply(lambda h: f"https://{h}"))
+pulumi.export("frontend_endpoint", frontend_app.default_host_name.apply(lambda h: f"https://{h}"))
+pulumi.export("storage_account_name", sa.name)
+pulumi.export("analysis_queue_name", queue.name)
+pulumi.export("images_container_name", "images")
+pulumi.export("reports_container_name", "reports")
+pulumi.export("cosmosdb_account_endpoint", cosmos.document_endpoint)
