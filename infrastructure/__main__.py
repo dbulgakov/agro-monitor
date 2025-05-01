@@ -56,7 +56,6 @@ func_plan = web.AppServicePlan(
 app_settings = [
     web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
     web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
-    web.NameValuePairArgs(name="WEBSITE_RUN_FROM_PACKAGE", value="1"),
     web.NameValuePairArgs(name="AZURE_STORAGE_CONNECTION_STRING", value=connection_string),
     web.NameValuePairArgs(name="AzureWebJobsStorage", value=connection_string),
     web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=queue.name),
@@ -75,17 +74,6 @@ func_app = web.WebApp(
         linux_fx_version="Python|3.11",
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
-)
-
-web.WebAppSourceControl(
-    "func-sc",
-    name=func_app.name,
-    resource_group_name=rg.name,
-    repo_url=git_repo_url,
-    branch=git_branch,
-    is_manual_integration=False,
-    is_git_hub_action=True,
-    opts=pulumi.ResourceOptions(depends_on=[func_app]),
 )
 
 front_plan = web.AppServicePlan(
@@ -108,17 +96,6 @@ front_app = web.WebApp(
         app_command_line="node server.js",
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
-)
-
-web.WebAppSourceControl(
-    "front-sc",
-    name=front_app.name,
-    resource_group_name=rg.name,
-    repo_url=git_repo_url,
-    branch=git_branch,
-    is_manual_integration=False,
-    is_git_hub_action=True,
-    opts=pulumi.ResourceOptions(depends_on=[front_app]),
 )
 
 pulumi.export("function_app_endpoint", func_app.default_host_name.apply(lambda h: f"https://{h}"))

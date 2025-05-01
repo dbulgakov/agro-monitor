@@ -38,15 +38,9 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Mimic frontend approach: Ensure Run From Package is off (0), Use SCM is on (true)
-      # Note: WEBSITE_RUN_FROM_PACKAGE=1 is generally recommended for Python Functions zip deploy for performance.
-      - name: 'Configure App Settings for Zip Deploy (SCM)'
-        run: |
-          az functionapp config appsettings set --name ${{ secrets.FUNC_API_APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP_NAME }} --settings WEBSITE_WEBDEPLOY_USE_SCM=true WEBSITE_RUN_FROM_PACKAGE=0
-
       - name: 'Deploy to Azure Function App'
         uses: azure/webapps-deploy@v2
         with:
           app-name: ${{ secrets.FUNC_API_APP_NAME }}
-          package: backend.zip # Path to the zip file created in the previous step
+          package: backend.zip
           publish-profile: ${{ secrets.FUNC_API_PUBLISH_PROFILE }}
