@@ -5,6 +5,8 @@ from typing import Optional, Dict
 import json
 import io
 import os
+import tempfile
+import contextlib
 
 import numpy as np
 from PIL import Image
@@ -37,39 +39,35 @@ def compute_ndvi(nir: np.ndarray, red: np.ndarray) -> np.ndarray:
         ndvi = np.where(denom != 0, (nir - red) / denom, 0)
     return ndvi.astype(np.float32)
 
-def create_ndvi_buffer(ndvi: np.ndarray) -> io.BytesIO:
+def save_ndvi_to_file(ndvi: np.ndarray, file_path: str):
     scaled = ((ndvi + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
     image = Image.fromarray(scaled, mode='L')
-    buf = io.BytesIO()
-    image.save(buf, format="PNG", optimize=True)
-    buf.seek(0)
-    return buf
+    image.save(file_path, format="PNG", optimize=True)
 
-def create_rgb_buffer(rgb: np.ndarray) -> io.BytesIO:
+def save_rgb_to_file(rgb: np.ndarray, file_path: str):
     if rgb.ndim == 3 and rgb.shape[0] == 3:
         rgb = np.transpose(rgb, (1, 2, 0))
     rgb = np.clip(rgb, 0, 255).astype(np.uint8)
     image = Image.fromarray(rgb, mode='RGB')
-    buf = io.BytesIO()
-    image.save(buf, format="PNG", optimize=True)
-    buf.seek(0)
-    return buf
+    image.save(file_path, format="PNG", optimize=True)
 
-async def upload_image_to_blob(client: BlobServiceClient, job_id: str, image_buffer: io.BytesIO, image_name: str) -> Optional[str]:
+async def upload_image_from_file(client: BlobServiceClient, job_id: str, local_file_path: str, image_name: str) -> Optional[str]:
     log = logging.getLogger(__name__).getChild(job_id)
     try:
         blob_name = f"{job_id}/{image_name}"
         blob_client = client.get_blob_client(container=IMAGES_CONTAINER_NAME, blob=blob_name)
-        image_buffer.seek(0)
-        await blob_client.upload_blob(
-            image_buffer.getvalue(),
-            overwrite=True,
-            content_settings=ContentSettings(content_type="image/png"),
-        )
+
+        log.info(f"Початок завантаження зображення з файлу: {local_file_path} до {blob_name}")
+        with open(local_file_path, "rb") as data:
+            await blob_client.upload_blob(
+                data,
+                overwrite=True,
+                content_settings=ContentSettings(content_type="image/png"),
+            )
         log.info(f"Зображення завантажено: {blob_client.url}")
         return blob_client.url
     except Exception as e:
-        log.error(f"Помилка завантаження зображення: {e}", exc_info=True)
+        log.error(f"Помилка завантаження зображення з файлу {local_file_path}: {e}", exc_info=True)
         return None
 
 async def upload_report_to_blob(client: BlobServiceClient, job_id: str, report_data: ReportData):
@@ -128,10 +126,11 @@ async def fetch_band_urls(job_id: str, payload: StartAnalysisPayload) -> Dict[st
 
     item = sign(items[0])
     logger.info("Знімок знайдено")
+    visual_href = item.assets.get('visual', item.assets.get('B04')).href
     return {
         'nir': item.assets['B08'].href,
         'red': item.assets['B04'].href,
-        'visual': item.assets.get('visual', item.assets['B04']).href,
+        'visual': visual_href,
     }
 
 async def read_bands(job_id: str, urls: Dict[str, str]) -> (np.ndarray, np.ndarray, Optional[np.ndarray]):
@@ -146,25 +145,31 @@ async def read_bands(job_id: str, urls: Dict[str, str]) -> (np.ndarray, np.ndarr
     try:
         results = await asyncio.wait_for(
             asyncio.gather(nir_task, red_task, rgb_task, return_exceptions=True),
-            timeout=60,
+            timeout=120,
         )
     except asyncio.TimeoutError:
-        raise RuntimeError("Читання знімків перевищило таймаут")
+        raise RuntimeError("Читання знімків перевищило таймаут (120 сек)")
 
     nir, red, rgb = results
-    if isinstance(nir, Exception) or isinstance(red, Exception):
-        error_msg = "; ".join(
-            [f"NIR band error: {nir}" if isinstance(nir, Exception) else "",
-             f"Red band error: {red}" if isinstance(red, Exception) else ""]
-        )
-        raise RuntimeError(f"Помилка читання смуг: {error_msg}")
+    error_messages = []
+    if isinstance(nir, Exception):
+        error_messages.append(f"NIR band error: {nir}")
+    if isinstance(red, Exception):
+        error_messages.append(f"Red band error: {red}")
+    if isinstance(rgb, Exception):
+        logger.warning(f"RGB band error (non-critical): {rgb}")
+        rgb = None
 
-    return nir, red, None if isinstance(rgb, Exception) else rgb
+    if error_messages:
+        raise RuntimeError(f"Помилка читання критичних смуг: {'; '.join(error_messages)}")
+
+    return nir, red, rgb
 
 async def read_and_compute_ndvi(job_id: str, urls: Dict[str, str]) -> (np.ndarray, Optional[np.ndarray]):
     nir, red, rgb = await read_bands(job_id, urls)
     await update_status(get_client(), job_id, JobStatus.PROCESSING, 30, "Обчислення NDVI")
     ndvi = await asyncio.to_thread(compute_ndvi, nir, red)
+    del nir, red
     return ndvi, rgb
 
 async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
@@ -180,57 +185,94 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
     try:
         payload = StartAnalysisPayload.model_validate(payload_dict)
     except Exception as err:
-        logger.error(f"Помилка перевірки навантаження: {err}")
+        logger.error(f"Помилка перевірки навантаження: {err}", exc_info=True)
         await update_status(client, job_id, JobStatus.FAILED, -1, f"Неправильне навантаження: {err}")
         return
 
     current = await get_job_status(client, job_id)
     if current and current.status in {JobStatus.PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED}:
-        logger.info(f"Пропущено, бо статус: {current.status}")
+        logger.warning(f"Завдання {job_id} вже обробляється/завершено/з помилкою ({current.status}). Пропуск.")
         return
 
     await update_status(client, job_id, JobStatus.PROCESSING, 0, "Початок обробки супутникових знімків")
 
+    temp_files_to_clean = []
     try:
         urls = await fetch_band_urls(job_id, payload)
         ndvi, rgb = await read_and_compute_ndvi(job_id, urls)
 
-        await update_status(client, job_id, JobStatus.PROCESSING, 60, "Створення візуалізацій")
-        ndvi_buf = await asyncio.to_thread(create_ndvi_buffer, ndvi)
-        tasks = [upload_image_to_blob(client, job_id, ndvi_buf, "ndvi_map.png")]
+        await update_status(client, job_id, JobStatus.PROCESSING, 60, "Створення та завантаження візуалізацій")
 
+        upload_tasks = []
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_ndvi_file:
+            ndvi_temp_path = temp_ndvi_file.name
+            temp_files_to_clean.append(ndvi_temp_path)
+        logger.info(f"Створення тимчасового файлу для NDVI: {ndvi_temp_path}")
+        await asyncio.to_thread(save_ndvi_to_file, ndvi, ndvi_temp_path)
+        upload_tasks.append(upload_image_from_file(client, job_id, ndvi_temp_path, "ndvi_map.png"))
+
+        rgb_temp_path = None
         if rgb is not None:
-            rgb_buf = await asyncio.to_thread(create_rgb_buffer, rgb)
-            tasks.append(upload_image_to_blob(client, job_id, rgb_buf, "rgb_map.png"))
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_rgb_file:
+                rgb_temp_path = temp_rgb_file.name
+                temp_files_to_clean.append(rgb_temp_path)
+            logger.info(f"Створення тимчасового файлу для RGB: {rgb_temp_path}")
+            await asyncio.to_thread(save_rgb_to_file, rgb, rgb_temp_path)
+            upload_tasks.append(upload_image_from_file(client, job_id, rgb_temp_path, "rgb_map.png"))
+        else:
+            logger.warning("RGB знімок недоступний, не буде створено rgb_map.png")
+            upload_tasks.append(asyncio.sleep(0, result=None))
 
-        ndvi_url, *rest = await asyncio.gather(*tasks)
-        rgb_url = rest[0] if rest else None
+        upload_results = await asyncio.gather(*upload_tasks)
+        ndvi_url = upload_results[0]
+        rgb_url = upload_results[1] if len(upload_results) > 1 else None
 
         await update_status(client, job_id, JobStatus.PROCESSING, 80, "Генерація рекомендацій")
         threshold = getattr(payload, 'ndvi_threshold', 0.3)
-        mask = ndvi < threshold
-        recs = await generate_openai_recommendations(job_id, ndvi, mask, payload.crop_type)
+        valid_ndvi = np.isfinite(ndvi)
+        mask = (ndvi < threshold) & valid_ndvi
+        recommendations = await generate_openai_recommendations(job_id, ndvi, mask, payload.crop_type)
 
         await update_status(client, job_id, JobStatus.PROCESSING, 95, "Формування звіту")
-        stats = {
-            'mean': float(np.mean(ndvi)),
-            'min': float(np.min(ndvi)),
-            'max': float(np.max(ndvi)),
-            'stress_percentage': float((mask & np.isfinite(ndvi)).sum() / np.isfinite(ndvi).sum() * 100)
-        }
+
+        ndvi_valid_pixels = ndvi[valid_ndvi]
+        if ndvi_valid_pixels.size > 0:
+             stats = {
+                 'mean': float(np.mean(ndvi_valid_pixels)),
+                 'min': float(np.min(ndvi_valid_pixels)),
+                 'max': float(np.max(ndvi_valid_pixels)),
+                 'std_dev': float(np.std(ndvi_valid_pixels)),
+                 'stress_percentage': float(mask.sum() / valid_ndvi.sum() * 100) if valid_ndvi.sum() > 0 else 0.0
+             }
+        else:
+             logger.warning("Немає валідних NDVI пікселів для статистики.")
+             stats = { 'mean': None, 'min': None, 'max': None, 'std_dev': None, 'stress_percentage': 0.0 }
+
         report = ReportData(
             jobId=job_id,
             status=JobStatus.COMPLETED,
-            requestPayload=payload.model_dump(),
+            requestPayload=payload.model_dump(exclude_none=True),
             reportTimestamp=datetime.now(timezone.utc).isoformat(),
             ndviStatistics=stats,
             mapUrls={'ndvi': ndvi_url, 'rgb': rgb_url},
-            recommendations=recs,
+            recommendations=recommendations,
         )
         await upload_report_to_blob(client, job_id, report)
         await update_status(client, job_id, JobStatus.COMPLETED, 100, "Аналіз завершено успішно")
         logger.info("Аналіз завершено успішно")
 
     except Exception as err:
-        logger.error(f"Помилка обробки: {err}", exc_info=True)
-        await update_status(client, job_id, JobStatus.FAILED, -1, f"Помилка: {err}")
+        logger.error(f"Помилка обробки завдання {job_id}: {err}", exc_info=True)
+        try:
+            await update_status(client, job_id, JobStatus.FAILED, -1, f"Помилка: {str(err)[:200]}")
+        except Exception as status_err:
+            logger.error(f"Не вдалося оновити статус на FAILED для {job_id}: {status_err}", exc_info=True)
+    finally:
+        logger.info(f"Очищення тимчасових файлів для {job_id}: {temp_files_to_clean}")
+        for temp_path in temp_files_to_clean:
+            try:
+                os.remove(temp_path)
+                logger.debug(f"Видалено тимчасовий файл: {temp_path}")
+            except OSError as e:
+                logger.error(f"Не вдалося видалити тимчасовий файл {temp_path}: {e}")
