@@ -3,6 +3,7 @@ import os
 import azure.functions as func
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
 from azure.storage.queue.aio import QueueServiceClient as AsyncQueueServiceClient
@@ -32,6 +33,21 @@ fastapi_app = FastAPI(
     description="API for retrieving and analyzing agricultural field data",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# Add CORS middleware
+origins = [
+    "https://frontendc613cf2f.azurewebsites.net",  # Your deployed frontend
+    "http://localhost:3000",                       # Local development
+    # Add any other origins if needed
+]
+
+fastapi_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @fastapi_app.exception_handler(Exception)
