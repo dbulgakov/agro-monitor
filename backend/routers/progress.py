@@ -23,59 +23,96 @@ async def get_blob_client(job_id: str):
     client = BlobServiceClient.from_connection_string(conn)
     return client.get_blob_client(container=container, blob=f"{job_id}/status.json")
 
+def format_sse_message(data: dict) -> str:
+    return f"data: {json.dumps(data)}\\n\\n"
+
 async def progress_event_generator(job_id: str, request: Request):
     blob_client = await get_blob_client(job_id)
-    last = None
+    last_payload_str = None
     interval = float(os.getenv("PROGRESS_CHECK_INTERVAL_SECONDS", "5"))
-    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "60"))  # Increased from 5 to 60 (5 minutes with 5s interval)
+    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "60"))
     check_count = 0
-    
+
     logger.info(f"Starting progress monitoring for job {job_id}")
-    
+
+    initial_message_sent = False
+    try:
+        if not await blob_client.exists():
+            initial_payload = {
+                "progress": 0,
+                "statusMessage": "Analysis request received",
+                "isComplete": False
+            }
+            yield format_sse_message(initial_payload)
+            last_payload_str = json.dumps(initial_payload)
+            initial_message_sent = True
+            logger.debug(f"Sent initial PENDING status for job {job_id}")
+
+    except Exception as e:
+        logger.error(f"Error checking initial blob status for job {job_id}: {str(e)}")
+
     while True:
         if await request.is_disconnected():
             logger.info(f"Client disconnected for job {job_id}")
             break
-            
+
         if check_count >= max_checks:
             logger.warning(f"Progress check timeout for job {job_id} after {check_count} attempts")
-            yield f"event: timeout\ndata: {json.dumps({'message': f'Progress check timeout after {max_checks * interval} seconds'})}\n\n"
-            break
-            
-        try:
-            if await blob_client.exists():
-                data = await (await blob_client.download_blob()).readall()
-                upd = ProgressUpdate.model_validate_json(data)
-                payload = upd.model_dump()
-                logger.debug(f"Progress update for job {job_id}: {payload}")
-            else:
-                if check_count == 0:
-                    payload = ProgressUpdate(
-                        jobId=job_id,
-                        status=JobStatus.PENDING,
-                        progress=0,
-                        message="Analysis request received",
-                        timestamp=time.time()
-                    ).model_dump()
-                    yield f"event: progress\ndata: {json.dumps(payload)}\n\n"
-                break
-        except Exception as e:
-            logger.error(f"Error checking progress for job {job_id}: {str(e)}")
-            err = ErrorResponse(message=str(e)).model_dump()
-            yield f"event: error\ndata: {json.dumps(err)}\n\n"
+            timeout_payload = {
+                "progress": 100,
+                "statusMessage": f"Progress check timeout after {max_checks * interval} seconds",
+                "isComplete": True
+            }
+            yield format_sse_message(timeout_payload)
             break
 
-        s = json.dumps(payload)
-        if s != last:
-            event_type = "complete" if payload["status"] in (JobStatus.COMPLETED, JobStatus.FAILED) else "progress"
-            yield f"event: {event_type}\ndata: {s}\n\n"
-            last = s
-            if event_type == "complete":
-                logger.info(f"Job {job_id} completed with status {payload['status']}")
-                break
+        current_payload = None
+        try:
+            if await blob_client.exists():
+                blob_data = await (await blob_client.download_blob()).readall()
+                update = ProgressUpdate.model_validate_json(blob_data)
+
+                is_complete = update.status in (JobStatus.COMPLETED, JobStatus.FAILED)
+                current_payload = {
+                    "progress": update.progress,
+                    "statusMessage": update.message,
+                    "isComplete": is_complete
+                }
+                logger.debug(f"Progress update for job {job_id}: {current_payload}")
+            elif not initial_message_sent:
+                initial_payload = {
+                    "progress": 0,
+                    "statusMessage": "Analysis request received",
+                    "isComplete": False
+                }
+                yield format_sse_message(initial_payload)
+                last_payload_str = json.dumps(initial_payload)
+                initial_message_sent = True
+                logger.debug(f"Sent PENDING status for job {job_id} (within loop)")
+                current_payload = None
+
+        except Exception as e:
+            logger.error(f"Error checking progress for job {job_id}: {str(e)}")
+            error_payload = {
+                "progress": 100,
+                "statusMessage": f"An error occurred: {str(e)}",
+                "isComplete": True
+            }
+            yield format_sse_message(error_payload)
+            break
+
+        if current_payload:
+            current_payload_str = json.dumps(current_payload)
+            if current_payload_str != last_payload_str:
+                yield format_sse_message(current_payload)
+                last_payload_str = current_payload_str
+                if current_payload.get("isComplete"):
+                    logger.info(f"Job {job_id} ended with isComplete=True. Status message: {current_payload.get('statusMessage')}")
+                    break
 
         check_count += 1
         await asyncio.sleep(interval)
+    logger.info(f"Stopping progress monitoring for job {job_id}")
 
 @router.get(
     "/{job_id}",
@@ -94,4 +131,9 @@ async def stream_progress(
     job_id: str = Path(..., description="Task ID for progress tracking"),
     _: None = Depends(lambda: check_environment_variables(get_required_env_vars("progress")))
 ):
-    return StreamingResponse(progress_event_generator(job_id, request), media_type="text/event-stream")
+    headers = {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+    }
+    return StreamingResponse(progress_event_generator(job_id, request), media_type="text/event-stream", headers=headers)

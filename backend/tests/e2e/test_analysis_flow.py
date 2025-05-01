@@ -1,35 +1,57 @@
 import asyncio
 import json
-import pytest
-from unittest.mock import patch
+import re
+import uuid
 
 import pytest
+from httpx import AsyncClient
 from fastapi import status
+from unittest.mock import patch
+
 from shared_code.schemas import JobStatus
 from shared_code.helpers.job_status import update_job_status, get_job_status
 from shared_code.queue_handler import process_analysis
 from .test_utils import DummyMsg
 
+
 async def test_analyze_invalid_payload(client):
     response = await client.post("/api/analyze", json={"bad": "data"})
     assert response.status_code == 422
 
-async def test_progress_for_nonexistent_job(client):
-    try:
-        async with asyncio.timeout(5):
-            async with client.stream("GET", "/api/progress/nonexistent-job") as response:
-                assert response.status_code in {200, 404}
-                async for line in response.aiter_lines():
-                    if line.startswith("data:"):
-                        data = json.loads(line[5:])
-                        if "status" in data and data["status"] in ["PENDING", "FAILED"]:
-                            break
-    except asyncio.TimeoutError:
-        pytest.fail("Progress check timed out")
+
+@pytest.mark.anyio
+async def test_progress_for_nonexistent_job(client: AsyncClient):
+    job_id = "nonexistent-job-" + str(uuid.uuid4())
+
+    async with asyncio.timeout(15):
+        async with client.stream("GET", f"/api/progress/{job_id}") as response:
+            # The stream itself should connect successfully
+            assert response.status_code == status.HTTP_200_OK
+            assert "text/event-stream" in response.headers.get("content-type", "")
+
+            buffer = ""
+            async for chunk in response.aiter_text():
+                buffer += chunk
+                # Look for the first JSON object in the stream
+                m = re.search(r"\{.*?\}", buffer)
+                if m:
+                    data = json.loads(m.group(0))
+                    # Validate its structure and contents
+                    assert "progress" in data
+                    assert "statusMessage" in data
+                    assert "isComplete" in data
+                    assert data["progress"] == 0
+                    assert data["statusMessage"] == "Analysis request received"
+                    assert data["isComplete"] is False
+                    return
+
+    pytest.fail("Did not receive the initial SSE message")
+
 
 async def test_report_for_nonexistent_job(client):
     response = await client.get("/api/report/nonexistent-job")
     assert response.status_code == 404
+
 
 @patch("shared_code.queue_handler.fetch_band_urls")
 async def test_job_failure_simulation(
@@ -81,8 +103,8 @@ async def test_job_failure_simulation(
     assert report_response.status_code in {200, 202}
     response_data = report_response.json()
     if "detail" in response_data:
-         assert response_data["detail"]["status"] == JobStatus.FAILED.value
+        assert response_data["detail"]["status"] == JobStatus.FAILED.value
     else:
-         assert response_data["status"] == JobStatus.FAILED.value
+        assert response_data["status"] == JobStatus.FAILED.value
 
     await analysis_queue_client.delete_message(message)

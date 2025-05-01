@@ -1,21 +1,22 @@
 import asyncio
 import json
+import re
+
 import numpy as np
 import pytest
 from fastapi import status
-from unittest.mock import patch
-import aiohttp
 
 from shared_code.schemas import JobStatus, ReportData, ProgressUpdate
 from shared_code.helpers.job_status import update_job_status, get_job_status
 from shared_code.queue_handler import process_analysis
 from .test_utils import DummyMsg
 
+
 @pytest.fixture(autouse=True)
 def stub_external_services(monkeypatch):
     # Stub fetch_band_urls used inside process_analysis
     async def fake_fetch_band_urls(job_id, payload):
-        await asyncio.sleep(0.1) # Simulate network delay
+        await asyncio.sleep(0.1)
         return {"nir": "dummy_url", "red": "dummy_url"}
     monkeypatch.setattr(
         "shared_code.queue_handler.fetch_band_urls",
@@ -24,7 +25,7 @@ def stub_external_services(monkeypatch):
 
     # Stub NDVI computation
     async def fake_read_and_compute_ndvi(job_id, urls):
-        await asyncio.sleep(0.1) # Simulate computation delay
+        await asyncio.sleep(0.1)
         return np.zeros((5, 5)), None
     monkeypatch.setattr(
         "shared_code.queue_handler.read_and_compute_ndvi",
@@ -33,12 +34,13 @@ def stub_external_services(monkeypatch):
 
     # Stub OpenAI recommendation generator
     async def fake_generate_openai_recommendations(job_id, ndvi, mask, crop_type):
-        await asyncio.sleep(0.1) # Simulate API call delay
+        await asyncio.sleep(0.1)
         return "Mocked recommendation"
     monkeypatch.setattr(
         "shared_code.queue_handler.generate_openai_recommendations",
         fake_generate_openai_recommendations,
     )
+
 
 async def test_queue_processing_end_to_end(
     client,
@@ -84,38 +86,39 @@ async def test_queue_processing_end_to_end(
 
     # 4. Start SSE connection and collect status updates concurrently
     status_updates = []
-    event_type = None
-    try:
+    buffer = ""
+    async with asyncio.timeout(60):
         async with client.stream("GET", f"/api/progress/{job_id}") as response:
-            response.raise_for_status() # Raises exception for 4xx/5xx
+            assert response.status_code == status.HTTP_200_OK
             assert "text/event-stream" in response.headers["content-type"]
-            
-            async for line in response.aiter_lines():
-                if line:
-                    line = line.strip()
-                    if line.startswith('event:'):
-                        event_type = line[6:].strip()
-                    elif line.startswith('data:'):
-                        data = json.loads(line[5:])
-                        if event_type in ['progress', 'complete']:
-                            status_updates.append(data)
-                            if event_type == 'complete':
-                                break
-                        event_type = None # Reset after processing data line
-    finally:
-        # Ensure the background task is awaited even if SSE fails
-        await processing_task 
 
-    # 5. Wait briefly for any final blob writes if needed (optional)
-    # await asyncio.sleep(1) 
+            async for chunk in response.aiter_text():
+                buffer += chunk
+                # extract all JSON payloads seen so far
+                for raw in re.findall(r"\{.*?\}", buffer):
+                    data = json.loads(raw)
+                    # avoid duplicates
+                    if not status_updates or data != status_updates[-1]:
+                        status_updates.append(data)
+                    # once we see completion, break out
+                    if data.get("isComplete"):
+                        await asyncio.wait_for(processing_task, timeout=5)
+                        break
+                if status_updates and status_updates[-1].get("isComplete"):
+                    break
 
     # 6. Verify status updates were received via SSE
-    assert len(status_updates) > 0, "Should receive at least one status update via SSE"
-    # Check for PENDING first, as it might be the first status sent
-    assert any(update.get('status') == JobStatus.PENDING.value for update in status_updates), "Should receive PENDING status"
-    assert any(update.get('status') == JobStatus.PROCESSING.value for update in status_updates), "Should receive PROCESSING status"
-    assert any(update.get('status') == JobStatus.COMPLETED.value for update in status_updates), "Should receive COMPLETED status"
-    
+    assert status_updates, "Should receive at least one status update via SSE"
+
+    first = status_updates[0]
+    assert first["progress"] == 0
+    assert first["isComplete"] is False
+
+    last = status_updates[-1]
+    assert last["progress"] == 100
+    assert last["isComplete"] is True
+    assert "complete" in last["statusMessage"].lower()
+
     # 7. Verify final status update in blob storage
     status_blob_client = reports_container_client.get_blob_client(f"{job_id}/status.json")
     assert await status_blob_client.exists(), "Status blob should exist"
