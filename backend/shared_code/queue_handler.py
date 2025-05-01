@@ -166,7 +166,16 @@ async def read_bands(job_id: str, urls: Dict[str, str]) -> (np.ndarray, np.ndarr
 
     nir, red, rgb = results
     if isinstance(nir, Exception) or isinstance(red, Exception):
-        raise RuntimeError(f"Помилка читання смуг: {[type(r).__name__ for r in results[:2]]}")
+        errors = []
+        if isinstance(nir, Exception):
+            errors.append(f"NIR band error: {nir}")
+        if isinstance(red, Exception):
+            errors.append(f"Red band error: {red}")
+        # Optionally include RGB error if relevant
+        # if len(results) > 2 and isinstance(results[2], Exception):
+        #     errors.append(f"RGB band error: {results[2]}")
+        error_details = "; ".join(errors)
+        raise RuntimeError(f"Помилка читання смуг: {error_details}")
     rgb = None if isinstance(rgb, Exception) else rgb
     return nir, red, rgb
 
