@@ -58,6 +58,7 @@ app_settings = [
     web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
     web.NameValuePairArgs(name="WEBSITE_RUN_FROM_PACKAGE", value="1"),
     web.NameValuePairArgs(name="AZURE_STORAGE_CONNECTION_STRING", value=connection_string),
+    web.NameValuePairArgs(name="AzureWebJobsStorage", value=connection_string),
     web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=queue.name),
     web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value="images"),
     web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value="reports"),
