@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 import uuid
 
 import pytest
@@ -23,29 +22,16 @@ async def test_analyze_invalid_payload(client):
 async def test_progress_for_nonexistent_job(client: AsyncClient):
     job_id = "nonexistent-job-" + str(uuid.uuid4())
 
-    async with asyncio.timeout(15):
-        async with client.stream("GET", f"/api/progress/{job_id}") as response:
-            # The stream itself should connect successfully
-            assert response.status_code == status.HTTP_200_OK
-            assert "text/event-stream" in response.headers.get("content-type", "")
+    response = await client.get(f"/api/progress/{job_id}")
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
 
-            buffer = ""
-            async for chunk in response.aiter_text():
-                buffer += chunk
-                # Look for the first JSON object in the stream
-                m = re.search(r"\{.*?\}", buffer)
-                if m:
-                    data = json.loads(m.group(0))
-                    # Validate its structure and contents
-                    assert "progress" in data
-                    assert "statusMessage" in data
-                    assert "isComplete" in data
-                    assert data["progress"] == 0
-                    assert data["statusMessage"] == "Analysis request received"
-                    assert data["isComplete"] is False
-                    return
-
-    pytest.fail("Did not receive the initial SSE message")
+    assert "progress" in data
+    assert "statusMessage" in data
+    assert "isComplete" in data
+    assert data["progress"] == 0
+    assert data["statusMessage"] == "Analysis request received"
+    assert data["isComplete"] is False
 
 
 async def test_report_for_nonexistent_job(client):

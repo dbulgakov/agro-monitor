@@ -76,11 +76,11 @@ const formatCoordinates = (geometry: Polygon | Point | undefined): string => {
 };
 
 // --- Component --- //
-type AnalysisStatus = 'idle' | 'starting' | 'processing-sse' | 'success' | 'error';
+type AnalysisStatus = 'idle' | 'starting' | 'processing' | 'success' | 'error';
 
 export default function HomePage() {
   const router = useRouter();
-  const sseCleanupRef = useRef<(() => void) | null>(null);
+  const pollerCleanupRef = useRef<(() => void) | null>(null);
   const mapSelectorRef = useRef<MapSelectorRef | null>(null); // Create ref for MapSelector
 
   // --- State Hooks --- //
@@ -114,8 +114,8 @@ export default function HomePage() {
      setJobId(null);
      setJobProgress(null);
      setError(null);
-     sseCleanupRef.current?.();
-     sseCleanupRef.current = null;
+     pollerCleanupRef.current?.();
+     pollerCleanupRef.current = null;
      // --- Call clearLayers on MapSelector --- //
      console.log('[HomePage] Скидання стану, очищення шарів мапи.');
      mapSelectorRef.current?.clearLayers();
@@ -150,9 +150,9 @@ export default function HomePage() {
   // Cleanup SSE connection ONLY on component unmount
   useEffect(() => {
     // Store the ref value in a variable inside the effect scope
-    const cleanupFunc = sseCleanupRef.current;
+    const cleanupFunc = pollerCleanupRef.current;
     return () => {
-      console.log('[HomePage Cleanup] Компонент демонтується, очищення SSE з\'єднання.');
+      console.log('[HomePage Cleanup] Компонент демонтується, очищення поллера.');
       cleanupFunc?.(); // Use the captured value
     };
   }, []); // <-- Empty dependency array
@@ -168,9 +168,9 @@ export default function HomePage() {
     setAnalysisStatus('starting');
 
     // --- Clean up any PREVIOUS SSE connection --- //
-    console.log('[HomePage] Очищення попереднього SSE з\'єднання (якщо є).');
-    sseCleanupRef.current?.(); // Call cleanup from the ref
-    sseCleanupRef.current = null; // Clear the ref
+    console.log('[HomePage] Очищення попереднього поллера (якщо є).');
+    pollerCleanupRef.current?.(); // Call cleanup from the ref
+    pollerCleanupRef.current = null; // Clear the ref
     // ------------------------------------------ //
 
     try {
@@ -184,37 +184,37 @@ export default function HomePage() {
       setJobId(response.jobId); // Update jobId state
       // Status will be set by the first onProgress event
 
-      // --- Subscribe to NEW SSE --- //
-      console.log('[HomePage] Підписка на нове SSE з\'єднання.');
-      sseCleanupRef.current = subscribeToJobProgress(response.jobId, {
+      // --- Start NEW Polling --- //
+      console.log('[HomePage] Запуск нового поллера.');
+      pollerCleanupRef.current = subscribeToJobProgress(response.jobId, {
           onProgress: (progressData) => {
               console.log('[HomePage] Отримано прогрес:', progressData); 
               setJobProgress(progressData); 
               
               setAnalysisStatus(currentStatus => {
-                  if (currentStatus !== 'processing-sse' && currentStatus !== 'error' && currentStatus !== 'success' && !progressData.isComplete) {
-                      console.log('[HomePage] Встановлення статусу processing-sse');
-                      return 'processing-sse';
+                  if (currentStatus !== 'processing' && currentStatus !== 'error' && currentStatus !== 'success' && !progressData.isComplete) {
+                      console.log('[HomePage] Встановлення статусу processing');
+                      return 'processing';
                   }
                   return currentStatus; 
               });
           },
           onComplete: (finalData) => {
-              console.log('[HomePage] SSE Завершено:', finalData); 
+              console.log('[HomePage] Опитування завершено:', finalData); 
               setJobProgress(finalData);
               setAnalysisStatus('success');
-              sseCleanupRef.current = null; // Clear ref on completion
+              pollerCleanupRef.current = null; // Clear ref on completion
           },
           onError: (err) => {
-              console.error('[HomePage] Помилка SSE:', err);
-              setError(err.message || 'Помилка SSE з\'єднання.');
+              console.error('[HomePage] Помилка опитування:', err);
+              setError(err.message || 'Помилка отримання прогресу.');
               setAnalysisStatus('error');
               setJobProgress((prev: JobProgress | null) => ({ 
                   ...(prev ?? { progress: 0, isComplete: false }), 
-                  statusMessage: 'Помилка SSE', 
+                  statusMessage: 'Помилка опитування', 
                   error: err.message 
               }));
-              sseCleanupRef.current = null; // Clear ref on error
+              pollerCleanupRef.current = null; // Clear ref on error
           }
       });
       // ------------------------ //
@@ -226,7 +226,7 @@ export default function HomePage() {
       setAnalysisStatus('error');
       setJobProgress(null);
       // Ensure cleanup ref is cleared on API error too
-      sseCleanupRef.current = null;
+      pollerCleanupRef.current = null;
     }
   };
 
@@ -239,7 +239,7 @@ export default function HomePage() {
   // --- Derived State --- //
   const isAreaSelected = selectedArea !== null;
   const isDateRangeValid = startDate && endDate && startDate <= endDate;
-  const isLoading = analysisStatus === 'starting' || analysisStatus === 'processing-sse';
+  const isLoading = analysisStatus === 'starting' || analysisStatus === 'processing';
 
   // --- Render --- //
   return (
@@ -356,7 +356,7 @@ export default function HomePage() {
             )}
 
             {/* Progress Display */}
-            {analysisStatus === 'processing-sse' && jobProgress && (
+            {analysisStatus === 'processing' && jobProgress && (
                 <div className="space-y-1.5 text-center">
                     <p className="text-sm font-medium text-gray-600">
                        <span className="inline-block align-middle mr-2">
@@ -375,7 +375,7 @@ export default function HomePage() {
               onClick={handleAnalyzeClick}
               disabled={isLoading || !isAreaSelected || !isDateRangeValid}
             >
-              {analysisStatus === 'starting' || analysisStatus === 'processing-sse' ? (
+              {analysisStatus === 'starting' || analysisStatus === 'processing' ? (
                  <>
                     {/* Optional: Keep spinner only for 'starting'? */}
                     {/* {analysisStatus === 'starting' && (
@@ -391,8 +391,9 @@ export default function HomePage() {
             <button
               className="w-full bg-green-600 text-white py-2.5 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-150 ease-in-out font-medium"
               onClick={handleGoToReport}
+              disabled={!jobId} // Disable if no jobId yet
             >
-              Перейти до звіту (Завдання: {jobId})
+              Перейти до звіту {jobId ? `(ID: ${jobId.substring(0, 6)}...)` : ''}
             </button>
           )}
 

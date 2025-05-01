@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 
 import numpy as np
 import pytest
@@ -84,31 +83,24 @@ async def test_queue_processing_end_to_end(
     dummy_msg = DummyMsg(raw_message)
     processing_task = asyncio.create_task(process_analysis(dummy_msg, blob_service_client))
 
-    # 4. Start SSE connection and collect status updates concurrently
+    # 4. Poll progress until completion and collect updates
     status_updates = []
-    buffer = ""
     async with asyncio.timeout(60):
-        async with client.stream("GET", f"/api/progress/{job_id}") as response:
-            assert response.status_code == status.HTTP_200_OK
-            assert "text/event-stream" in response.headers["content-type"]
+        while True:
+            resp = await client.get(f"/api/progress/{job_id}")
+            assert resp.status_code == status.HTTP_200_OK
+            data = resp.json()
+            # avoid duplicates
+            if not status_updates or data != status_updates[-1]:
+                status_updates.append(data)
 
-            async for chunk in response.aiter_text():
-                buffer += chunk
-                # extract all JSON payloads seen so far
-                for raw in re.findall(r"\{.*?\}", buffer):
-                    data = json.loads(raw)
-                    # avoid duplicates
-                    if not status_updates or data != status_updates[-1]:
-                        status_updates.append(data)
-                    # once we see completion, break out
-                    if data.get("isComplete"):
-                        await asyncio.wait_for(processing_task, timeout=5)
-                        break
-                if status_updates and status_updates[-1].get("isComplete"):
-                    break
+            if data.get("isComplete"):
+                await asyncio.wait_for(processing_task, timeout=5)
+                break
+            await asyncio.sleep(0.5)
 
-    # 6. Verify status updates were received via SSE
-    assert status_updates, "Should receive at least one status update via SSE"
+    # 6. Verify status updates were received
+    assert status_updates, "Should receive at least one status update"
 
     first = status_updates[0]
     assert first["progress"] == 0

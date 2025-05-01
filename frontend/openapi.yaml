@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Agro Monitor Backend API
   version: 1.0.0
-  description: API for retrieving and analyzing agricultural field data. Includes SSE for tracking task progress.
+  description: API for retrieving and analyzing agricultural field data. Includes polling for task progress.
 servers:
   - url: /api
     description: Local or proxy server
@@ -75,11 +75,10 @@ paths:
 
   /progress/{jobId}:
     get:
-      summary: Subscribe to task progress updates (SSE)
-      operationId: subscribeProgress
+      summary: Get current task progress
+      operationId: getProgress
       tags:
         - Progress
-        - SSE
       parameters:
         - name: jobId
           in: path
@@ -89,20 +88,11 @@ paths:
             type: string
       responses:
         '200':
-          description: Successfully subscribed to event stream. Events will be sent in text/event-stream format. Each event (except comments) will contain a JobProgress JSON object in the 'data' field.
+          description: Successfully retrieved current job progress
           content:
-            text/event-stream:
+            application/json:
               schema:
-                type: string
-                description: |
-                  Server-Sent Events stream.
-                  Each message (event):
-                  ```
-                  data: {"progress": 50, "statusMessage": "Processing data...", "isComplete": false, "error": null}
-
-                  ```
-                  Messages may contain an `event: <event_name>` field if needed to distinguish event types, but in this case the standard `message` is used.
-                  The stream ends when `isComplete` is `true` or `error` is not `null`.
+                $ref: '#/components/schemas/JobProgress'
         '404':
           description: Task not found
           content:
@@ -337,7 +327,9 @@ components:
           description: Текстовое резюме отчета
         error:
           type: string
-          description: Сообщение об ошибке, если status FAILED
+          nullable: true
+          description: Text message describing the error if the job failed.
+          example: "Failed to download Sentinel image."
         areaSqKm:
           type: number
           format: float
@@ -371,20 +363,21 @@ components:
         progress:
           type: integer
           format: int32
-          minimum: 0
-          maximum: 100
-          description: Прогресс выполнения задачи в процентах
+          description: Прогресс завдання від 0 до 100 (-1 при помилці).
+          example: 50
         statusMessage:
           type: string
-          description: Сообщение о текущем этапе выполнения
-          example: "Анализ NDVI..."
+          description: Описове повідомлення про поточний статус.
+          example: "Обробка даних..."
         isComplete:
           type: boolean
-          description: Флаг, указывающий на завершение задачи (успешное или с ошибкой)
+          description: Чи завершено завдання (успішно або з помилкою).
+          example: false
         error:
           type: string
           nullable: true
-          description: Сообщение об ошибке, если задача завершилась неудачно
+          description: Повідомлення про помилку, якщо завдання завершилось невдало.
+          example: null
 
     ErrorResponse:
       type: object
