@@ -273,7 +273,7 @@ export default function HomePage() {
 
           {/* Crop Type */}
           <div>
-            <label htmlFor="crop_type" className="block font-medium text-gray-700 mb-1">Культура</label>
+            <label htmlFor="crop_type" className="block font-medium text-black mb-1">Культура</label>
             <CropTypeSelect
               value={analysisParams.crop_type}
               onChange={(v) => handleParamChange('crop_type', v as CropType)}
@@ -283,7 +283,7 @@ export default function HomePage() {
 
           {/* NDVI Threshold */}
           <div>
-            <label htmlFor="ndvi_threshold" className="block font-medium text-gray-700 mb-1">Поріг NDVI</label>
+            <label htmlFor="ndvi_threshold" className="block font-medium text-black mb-1">Поріг NDVI</label>
             <select
               id="ndvi_threshold"
               value={analysisParams.ndvi_threshold}
@@ -298,7 +298,7 @@ export default function HomePage() {
 
            {/* Cloud Cover */}
            <div>
-            <label htmlFor="max_cloud_cover" className="block font-medium text-gray-700 mb-1">Макс. хмарність (%)</label>
+            <label htmlFor="max_cloud_cover" className="block font-medium text-black mb-1">Макс. хмарність (%)</label>
             <select
               id="max_cloud_cover"
               value={analysisParams.max_cloud_cover}
@@ -313,7 +313,7 @@ export default function HomePage() {
 
           {/* Date Range Picker */}
           <div>
-            <label className="block font-medium text-gray-700 mb-1">Діапазон дат</label>
+            <label className="block font-medium text-black mb-1">Діапазон дат</label>
             <div className="flex items-center space-x-2">
                  <DatePicker
                     selected={startDate}
