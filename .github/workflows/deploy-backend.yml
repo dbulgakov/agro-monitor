@@ -32,14 +32,6 @@ jobs:
       - name: 'Set up Azure Functions Core Tools'
         uses: Azure/functions-action@v1
         with:
+          app-name: ${{ secrets.FUNC_API_APP_NAME }}
           package: backend
-          # Optional: Specify the version of Azure Functions Core Tools
-          # version: '<version>'
-
-      - name: 'Deploy to Azure Functions'
-        run: |
-          cd backend # Ensure we are in the correct directory
-          func azure functionapp publish ${{ secrets.FUNC_API_APP_NAME }} --python
-        env:
-          FUNC_API_APP_NAME: ${{ secrets.FUNC_API_APP_NAME }}
-          RESOURCE_GROUP_NAME: ${{ secrets.RESOURCE_GROUP_NAME }}
+          publish-profile: ${{ secrets.FUNC_API_PUBLISH_PROFILE }}
