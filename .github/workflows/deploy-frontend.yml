@@ -28,14 +28,11 @@ jobs:
           echo "Building frontend with API URL: $NEXT_PUBLIC_API_URL"
           npm run build
 
-      - name: Bundle static assets for standalone
+      - name: Prepare standalone package with dependencies
         run: |
-          mkdir -p .next/standalone/.next
-          cp -R .next/static .next/standalone/.next/static
-          if [ -d "public" ]; then
-            cp -R public .next/standalone/public
-          fi
-        working-directory: frontend
+          cp package.json .next/standalone/
+          cp package-lock.json .next/standalone/
+          cp -R node_modules .next/standalone/
 
       - name: Azure Login
         uses: azure/login@v1
