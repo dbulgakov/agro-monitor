@@ -1,14 +1,15 @@
-import { NextRequest } from 'next/server';
+// Removed NextRequest import; using standard Request type
+
 import { JobProgress } from '@/lib/api';
 
 // Helper function to create SSE messages
-function createSSEMessage(data: any): string {
+function createSSEMessage(data: JobProgress | { error: string }): string {
     return `data: ${JSON.stringify(data)}\n\n`;
 }
 
-export async function GET(request: NextRequest, { params }: { params: { jobId: string } }) {
-    const pathParts = request.nextUrl.pathname.split('/');
-    const jobId = pathParts[pathParts.length - 1]; 
+// Use standard Request and destructure context.params
+export async function GET(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+    const { jobId } = await params;
 
     if (!jobId) {
       console.error('[Mock SSE] ID завдання не знайдено в шляху!');
@@ -58,11 +59,12 @@ export async function GET(request: NextRequest, { params }: { params: { jobId: s
                 controller.enqueue(encoder.encode(createSSEMessage(progressData)));
             };
 
-            request.signal.onabort = () => {
+            request.signal.addEventListener('abort', () => {
                 console.log(`[Mock SSE /api/progress/${jobId}] З\'єднання закрито клієнтом`);
                 if (intervalId) clearInterval(intervalId);
-                try { controller.close(); } catch (e) { /* Ignore */ }
-            };
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                try { controller.close(); } catch (e) { /* Ignore - Keep comment or add specific logging */ }
+            });
 
             await new Promise(resolve => setTimeout(resolve, 50));
             sendProgress();

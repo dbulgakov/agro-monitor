@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { ReportData, AnalysisParameters } from '@/lib/api';
 import { Feature, Polygon, Point } from 'geojson';
 
@@ -82,9 +82,8 @@ function generateMockReport(jobId: string): MockReportStructure {
     };
 }
 
-export async function GET(request: NextRequest, { params }: { params: { jobId: string } }) {
-    const pathParts = request.nextUrl.pathname.split('/');
-    const jobId = pathParts[pathParts.length - 1];
+export async function GET(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+    const { jobId } = await params;
 
     if (!jobId) {
         console.error('[Mock Report API] Job ID missing in path');
