@@ -2,6 +2,7 @@ import pulumi
 import pulumi_azure_native.resources as resources
 import pulumi_azure_native.storage as storage
 import pulumi_azure_native.web as web
+import pulumi_azure_native.authorization as authorization
 import os
 import hashlib
 
@@ -54,11 +55,11 @@ func_plan = web.AppServicePlan(
 app_settings = [
     web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
     web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
-    web.NameValuePairArgs(name="AZURE_STORAGE_CONNECTION_STRING", value=connection_string),
     web.NameValuePairArgs(name="AzureWebJobsStorage", value=connection_string),
     web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=queue.name),
     web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value="images"),
     web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value="reports"),
+    web.NameValuePairArgs(name="STORAGE_CONNECTION_STRING_BLOB", value=connection_string)
 ]
 
 func_app = web.WebApp(
@@ -75,6 +76,17 @@ func_app = web.WebApp(
         ),
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
+)
+
+current_config = authorization.get_client_config()
+storage_queue_data_contributor_role_id = f"/subscriptions/{current_config.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/974c5e8b-45b9-4653-ba55-5f855dd0fb88"
+
+queue_role_assignment = authorization.RoleAssignment(
+    "funcQueueRoleAssignment",
+    principal_id=func_app.identity.principal_id,
+    principal_type=authorization.PrincipalType.SERVICE_PRINCIPAL,
+    role_definition_id=storage_queue_data_contributor_role_id,
+    scope=sa.id,
 )
 
 backend_api_url = func_app.default_host_name.apply(lambda h: f"https://{h}")
@@ -115,3 +127,4 @@ pulumi.export("reports_container_name", reports_container.name)
 pulumi.export("resource_group_name", rg.name)
 pulumi.export("function_app_name", func_app.name)
 pulumi.export("frontend_app_name", front_app.name)
+pulumi.export("function_app_principal_id", func_app.identity.principal_id)
