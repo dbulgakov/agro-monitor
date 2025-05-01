@@ -3,7 +3,7 @@ import os
 import uuid
 import logging
 
-from azure.storage.queue.aio import QueueClient
+from azure.storage.queue.aio import QueueClient, QueueServiceClient
 from azure.storage.blob.aio import BlobServiceClient
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 
@@ -14,17 +14,13 @@ from shared_code.schemas import StartAnalysisResponse, StartAnalysisPayload, Job
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Analysis"])
 
-async def get_queue_client():
-    conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-    name = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests")
-    if not conn or not name:
-        logger.error(f"Queue configuration error: conn={bool(conn)}, name={name}")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue configuration error: Check AZURE_STORAGE_CONNECTION_STRING and ANALYSIS_QUEUE_NAME environment variables")
-    return QueueClient.from_connection_string(conn, queue_name=name)
-
 # Dependency to get BlobServiceClient from app state
 async def get_blob_service_client(request: Request) -> BlobServiceClient:
     return request.app.state.blob_service_client
+
+# Dependency to get QueueServiceClient from app state
+async def get_queue_service_client(request: Request) -> QueueServiceClient:
+    return request.app.state.queue_service_client
 
 @router.post(
     "",
@@ -41,7 +37,7 @@ async def start_analysis(
     request: Request,
     payload: StartAnalysisPayload,
     _: None = Depends(lambda: check_environment_variables(get_required_env_vars("start_analysis"))),
-    queue: QueueClient = Depends(get_queue_client),
+    queue_service_client: QueueServiceClient = Depends(get_queue_service_client),
     blob_client: BlobServiceClient = Depends(get_blob_service_client)
 ):
     try:
@@ -49,14 +45,18 @@ async def start_analysis(
         job_id = str(uuid.uuid4())
         logger.info(f"Created job ID: {job_id}")
         
+        # Get queue name (ensure env var is present via check_environment_variables)
+        queue_name = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests") 
+        queue_client = queue_service_client.get_queue_client(queue_name)
+
         await update_job_status(blob_client, job_id, JobStatus.PENDING, 0, "Analysis request received")
         logger.info(f"Updated job status for {job_id}")
         
         message = json.dumps({"jobId": job_id, "payload": payload.model_dump()})
         logger.info(f"Sending message to queue: {message}")
         
-        async with queue:
-            await queue.send_message(message)
+        # No need for async with queue_client as its lifecycle is managed by lifespan
+        await queue_client.send_message(message) 
         logger.info(f"Message sent successfully for job {job_id}")
         
         return StartAnalysisResponse(jobId=job_id)

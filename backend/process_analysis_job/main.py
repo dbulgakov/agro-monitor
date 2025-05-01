@@ -125,14 +125,7 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
         await update_status(client, job_id, JobStatus.FAILED, -1, f"Error: {err}")
 
 
-def main(msg: func.QueueMessage):
+async def main(msg: func.QueueMessage):
     client = get_async_blob_service_client()
-    try:
-        async def run_main():
-            async with client:
-                await process_analysis(msg, client)
-
-        asyncio.run(run_main())
-    except Exception as exc:
-        logging.critical(f"Unhandled exception in main: {exc}", exc_info=True)
-        raise
+    async with client:
+        await process_analysis(msg, client)
