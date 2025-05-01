@@ -49,7 +49,7 @@ async def start_analysis(
         queue_name = os.getenv("ANALYSIS_QUEUE_NAME", "analysis-requests") 
         queue_client = queue_service_client.get_queue_client(queue_name)
 
-        await update_job_status(blob_client, job_id, JobStatus.PENDING, 0, "Analysis request received")
+        await update_job_status(blob_client, job_id, JobStatus.PENDING, 0, "Початок аналізу")
         logger.info(f"Updated job status for {job_id}")
         
         message = json.dumps({"jobId": job_id, "payload": payload.model_dump()})

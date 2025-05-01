@@ -30,7 +30,7 @@ async def test_progress_for_nonexistent_job(client: AsyncClient):
     assert "statusMessage" in data
     assert "isComplete" in data
     assert data["progress"] == 0
-    assert data["statusMessage"] == "Analysis request received"
+    assert data["statusMessage"] == "Початок аналізу"
     assert data["isComplete"] is False
 
 

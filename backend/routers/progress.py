@@ -50,7 +50,7 @@ async def get_progress(
         else:
             payload = {
                 "progress": 0,
-                "statusMessage": "Analysis request received",
+                "statusMessage": "Початок аналізу",
                 "isComplete": False,
             }
 
