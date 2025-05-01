@@ -22,70 +22,68 @@ export function subscribeToJobProgress(
 ): () => void {
   let eventSource: EventSource | null = null;
   let reconnectTimeout: NodeJS.Timeout | null = null;
-  // const url = `${SSE_BASE_URL}/progress/${jobId}`; // OLD URL construction
-  const url = `${API_BASE_URL}/progress/${jobId}`; // Use imported API_BASE_URL
+  const url = `${API_BASE_URL}/api/progress/${jobId}/sse`;
+
+  console.log(`[SSE Client] Connecting to: ${url}`);
 
   const connect = () => {
     if (eventSource) {
-        eventSource.close(); // Close existing connection if any
+      eventSource.close();
     }
     if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = null;
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
     }
 
     try {
       console.log(`SSE: Підключення до ${url}`);
-      eventSource = new EventSource(url); // Assumes EventSource is available in the environment
+      eventSource = new EventSource(url);
 
       eventSource.onmessage = (event) => {
         try {
           const data: JobProgress = JSON.parse(event.data);
           console.log('SSE: Отримано дані', data);
 
-          onProgress(data); // Send progress update
+          onProgress(data);
 
           if (data.isComplete) {
             console.log('SSE: Отримано повідомлення про завершення прогресу.');
-            onComplete(data); // Signal completion
-            closeConnection(); // Close after completion message
+            onComplete(data);
+            closeConnection();
           } else if (data.error) {
-             console.error('SSE: Отримано повідомлення про помилку', data.error);
-             onError(new Error(data.error));
-             closeConnection(); // Close on error message
+            console.error('SSE: Отримано повідомлення про помилку', data.error);
+            onError(new Error(data.error));
+            closeConnection();
           }
         } catch (parseError) {
           console.error('SSE: Помилка розбору даних повідомлення', parseError);
           onError(parseError instanceof Error ? parseError : new Error('Не вдалося розібрати повідомлення SSE'));
-          closeConnection(); // Close on parse error
+          closeConnection();
         }
       };
 
       eventSource.onerror = (errorEvent) => {
         console.error('SSE: Помилка з\'єднання', errorEvent);
-        // Don't call onError immediately, attempt reconnection first
         if (eventSource?.readyState === EventSource.CLOSED) {
-             console.log('SSE: З\'єднання закрито сервером або мережева помилка. Спроба перепідключення...');
-             // Simple backoff strategy (e.g., retry after 5 seconds)
-             if (!reconnectTimeout) {
-                 reconnectTimeout = setTimeout(() => {
-                     console.log('SSE: Перепідключення...');
-                     connect(); // Attempt to reconnect
-                 }, 5000);
-             }
+          console.log('SSE: З\'єднання закрито сервером або мережева помилка. Спроба перепідключення...');
+          if (!reconnectTimeout) {
+            reconnectTimeout = setTimeout(() => {
+              console.log('SSE: Перепідключення...');
+              connect();
+            }, 5000);
+          }
         } else {
-            // If it's an unrecoverable error, signal it
-            onError(new Error('Помилка SSE з\'єднання'));
-            closeConnection();
+          onError(new Error('Помилка SSE з\'єднання'));
+          closeConnection();
         }
       };
 
       eventSource.onopen = () => {
-          console.log(`SSE: З\'єднання відкрито до ${url}`);
-          if (reconnectTimeout) { // Clear reconnect timeout on successful open
-              clearTimeout(reconnectTimeout);
-              reconnectTimeout = null;
-          }
+        console.log(`SSE: З\'єднання відкрито до ${url}`);
+        if (reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = null;
+        }
       };
 
     } catch (err) {
@@ -96,8 +94,8 @@ export function subscribeToJobProgress(
 
   const closeConnection = () => {
     if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = null;
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
     }
     if (eventSource) {
       console.log(`SSE: Закриття з\'єднання до ${url}`);
@@ -106,9 +104,7 @@ export function subscribeToJobProgress(
     }
   };
 
-  // Initial connection attempt
   connect();
 
-  // Return the cleanup function
   return closeConnection;
 } 
