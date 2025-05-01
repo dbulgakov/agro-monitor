@@ -126,7 +126,6 @@ pulumi.export("analysis_queue_name", queue.name)
 pulumi.export("images_container_name", images_container.name)
 pulumi.export("reports_container_name", reports_container.name)
 
-# Add resource names to outputs for easy access
 pulumi.export("resource_group_name", rg.name)
 pulumi.export("function_app_name", func_app.name)
 pulumi.export("frontend_app_name", front_app.name)
