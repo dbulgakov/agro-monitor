@@ -29,13 +29,17 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: 'Zip artifact for deployment'
-        run: zip -r ../deploy.zip .
-        working-directory: backend # Zip contents of backend dir
+      - name: 'Set up Azure Functions Core Tools'
+        uses: Azure/functions-action@v1
+        with:
+          package: backend
+          # Optional: Specify the version of Azure Functions Core Tools
+          # version: '<version>'
 
-      - name: 'Run Azure Functions deployment'
+      - name: 'Deploy to Azure Functions'
         run: |
-          az functionapp deployment source config-zip --resource-group ${{ secrets.RESOURCE_GROUP_NAME }} --name ${{ secrets.FUNC_API_APP_NAME }} --src ../deploy.zip
+          cd backend # Ensure we are in the correct directory
+          func azure functionapp publish ${{ secrets.FUNC_API_APP_NAME }} --python
         env:
           FUNC_API_APP_NAME: ${{ secrets.FUNC_API_APP_NAME }}
           RESOURCE_GROUP_NAME: ${{ secrets.RESOURCE_GROUP_NAME }}
