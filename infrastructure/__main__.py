@@ -3,6 +3,8 @@ import pulumi_azure_native.resources as resources
 import pulumi_azure_native.storage as storage
 import pulumi_azure_native.web as web
 import pulumi_azure_native.authorization as authorization
+import pulumi_azure_native.insights as insights
+import pulumi_azure_native.operationalinsights as operationalinsights
 import os
 import hashlib
 
@@ -52,6 +54,27 @@ func_plan = web.AppServicePlan(
     reserved=True,
 )
 
+# Create Log Analytics workspace
+log_analytics_workspace = operationalinsights.Workspace(
+    "log-analytics",
+    resource_group_name=rg.name,
+    location=rg.location,
+    sku=operationalinsights.WorkspaceSkuArgs(
+        name="PerGB2018"
+    ),
+    retention_in_days=30,
+)
+
+# Create Application Insights
+app_insights = insights.Component(
+    "app-insights",
+    resource_group_name=rg.name,
+    location=rg.location,
+    kind="web",
+    application_type="web",
+    workspace_resource_id=log_analytics_workspace.id,
+)
+
 app_settings = [
     web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
     web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
@@ -59,7 +82,9 @@ app_settings = [
     web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=queue.name),
     web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value="images"),
     web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value="reports"),
-    web.NameValuePairArgs(name="STORAGE_CONNECTION_STRING_BLOB", value=connection_string)
+    web.NameValuePairArgs(name="STORAGE_CONNECTION_STRING_BLOB", value=connection_string),
+    web.NameValuePairArgs(name="APPINSIGHTS_INSTRUMENTATIONKEY", value=app_insights.instrumentation_key),
+    web.NameValuePairArgs(name="APPLICATIONINSIGHTS_CONNECTION_STRING", value=app_insights.connection_string),
 ]
 
 func_app = web.WebApp(
@@ -128,3 +153,7 @@ pulumi.export("resource_group_name", rg.name)
 pulumi.export("function_app_name", func_app.name)
 pulumi.export("frontend_app_name", front_app.name)
 pulumi.export("function_app_principal_id", func_app.identity.principal_id)
+pulumi.export("app_insights_name", app_insights.name)
+pulumi.export("app_insights_instrumentation_key", app_insights.instrumentation_key)
+pulumi.export("log_analytics_workspace_name", log_analytics_workspace.name)
+pulumi.export("log_analytics_workspace_id", log_analytics_workspace.id)
