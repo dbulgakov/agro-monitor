@@ -82,7 +82,7 @@ app_settings = [
     web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=queue.name),
     web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value="images"),
     web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value="reports"),
-    web.NameValuePairArgs(name="STORAGE_CONNECTION_STRING_BLOB", value=connection_string),
+    web.NameValuePairArgs(name="AZURE_STORAGE_CONNECTION_STRING", value=connection_string),
     web.NameValuePairArgs(name="APPINSIGHTS_INSTRUMENTATIONKEY", value=app_insights.instrumentation_key),
     web.NameValuePairArgs(name="APPLICATIONINSIGHTS_CONNECTION_STRING", value=app_insights.connection_string),
 ]
