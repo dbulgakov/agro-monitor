@@ -8,7 +8,7 @@ import aiohttp
 
 from shared_code.schemas import JobStatus, ReportData, ProgressUpdate
 from shared_code.helpers.job_status import update_job_status, get_job_status
-from process_analysis_job.main import process_analysis
+from shared_code.queue_handler import process_analysis
 from .test_utils import DummyMsg
 
 @pytest.fixture(autouse=True)
@@ -18,7 +18,7 @@ def stub_external_services(monkeypatch):
         await asyncio.sleep(0.1) # Simulate network delay
         return {"nir": "dummy_url", "red": "dummy_url"}
     monkeypatch.setattr(
-        "process_analysis_job.main.fetch_band_urls",
+        "shared_code.queue_handler.fetch_band_urls",
         fake_fetch_band_urls,
     )
 
@@ -27,7 +27,7 @@ def stub_external_services(monkeypatch):
         await asyncio.sleep(0.1) # Simulate computation delay
         return np.zeros((5, 5)), None
     monkeypatch.setattr(
-        "process_analysis_job.main.read_and_compute_ndvi",
+        "shared_code.queue_handler.read_and_compute_ndvi",
         fake_read_and_compute_ndvi,
     )
 
@@ -36,7 +36,7 @@ def stub_external_services(monkeypatch):
         await asyncio.sleep(0.1) # Simulate API call delay
         return "Mocked recommendation"
     monkeypatch.setattr(
-        "process_analysis_job.main.generate_openai_recommendations",
+        "shared_code.queue_handler.generate_openai_recommendations",
         fake_generate_openai_recommendations,
     )
 

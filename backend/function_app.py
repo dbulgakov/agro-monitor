@@ -10,6 +10,8 @@ from azure.storage.queue.aio import QueueServiceClient as AsyncQueueServiceClien
 from routers.analysis import router as analysis_router
 from routers.report import router as report_router
 from routers.progress import router as progress_router
+from shared_code.queue_handler import process_analysis
+from shared_code.helpers.blob import get_async_blob_service_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,3 +52,21 @@ async def read_root():
 
 # Wrap FastAPI app with Azure Functions
 app = func.AsgiFunctionApp(app=fastapi_app, http_auth_level=func.AuthLevel.ANONYMOUS)
+
+# Register queue-trigger function for analysis jobs in the same v2 Function App
+@app.function_name(name="process_analysis_job")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name="%ANALYSIS_QUEUE_NAME%",
+    connection="AZURE_STORAGE_CONNECTION_STRING",
+)
+async def process_analysis_job(msg: func.QueueMessage):
+    """Background worker that processes analysis jobs coming from the storage queue.
+
+    The actual heavy-lifting logic lives in `process_analysis_job.main.process_analysis`.
+    Here we simply resolve the async `BlobServiceClient`, invoke the worker, and
+    ensure proper cleanup.
+    """
+    client = get_async_blob_service_client()
+    async with client:
+        await process_analysis(msg, client)

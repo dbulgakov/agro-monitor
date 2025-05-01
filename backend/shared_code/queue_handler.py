@@ -16,8 +16,6 @@ from shared_code.helpers.raster_helpers import read_band, read_rgb
 from shared_code.helpers.sentinel_helpers import get_sentinel2_urls
 from shared_code.schemas import JobStatus, StartAnalysisPayload, ReportData
 
-_CMAP = None  # Colormap defined in helpers
-_NORM = None  # Normalizer defined in helpers
 
 async def update_status(client: BlobServiceClient, job_id: str, status: JobStatus, progress: int, message: str):
     await update_job_status(client, job_id, status, progress, message)
@@ -122,10 +120,4 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
 
     except Exception as err:
         logger.error(f"Processing error: {err}", exc_info=True)
-        await update_status(client, job_id, JobStatus.FAILED, -1, f"Error: {err}")
-
-
-async def main(msg: func.QueueMessage):
-    client = get_async_blob_service_client()
-    async with client:
-        await process_analysis(msg, client)
+        await update_status(client, job_id, JobStatus.FAILED, -1, f"Error: {err}") 
