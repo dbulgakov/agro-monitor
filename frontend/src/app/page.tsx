@@ -100,7 +100,7 @@ export default function HomePage() {
   // State for Date Picker
   const [startDate, setStartDate] = useState<Date | null>(() => {
       const date = new Date();
-      date.setFullYear(date.getFullYear() - 2);
+      date.setMonth(date.getMonth() - 6); // Set start date to 6 months ago
       return date;
   });
   const [endDate, setEndDate] = useState<Date | null>(new Date());
