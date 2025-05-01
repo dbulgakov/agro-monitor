@@ -123,13 +123,19 @@ async def fetch_band_urls(job_id: str, payload: StartAnalysisPayload) -> Dict[st
 
     catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
 
-    start_date = payload.date_range.start.strftime("%Y-%m-%d")
-    end_date = payload.date_range.end.strftime("%Y-%m-%d")
+    # Extract start and end dates from the ISO-8601 interval string (YYYY-MM-DD/YYYY-MM-DD)
+    try:
+        start_date_str, end_date_str = payload.date_range.split("/")
+    except ValueError:
+        raise RuntimeError(f"Неправильний формат date_range: {payload.date_range}")
+
+    # Microsoft Planetary Computer STAC API accepts the same interval format directly
+    datetime_range = f"{start_date_str}/{end_date_str}"
 
     items = catalog.search(
         collections=["sentinel-2-l2a"],
         intersects=payload.area.geometry.model_dump(),
-        datetime=f"{start_date}/{end_date}",
+        datetime=datetime_range,
         query={"eo:cloud_cover": {"lt": 50}},
         max_items=1,
     ).get_all_items()
