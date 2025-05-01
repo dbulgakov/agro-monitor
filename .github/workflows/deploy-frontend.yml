@@ -27,6 +27,8 @@ jobs:
 
       - name: Prepare standalone package for deployment
         run: |
+          # Ensure the target directory structure exists
+          mkdir -p ./.next/standalone/.next
           # Copy static assets required by the standalone server
           cp -R ./.next/static ./.next/standalone/.next/static
           # Copy public folder if it exists and is needed
