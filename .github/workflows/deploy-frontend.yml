@@ -28,11 +28,10 @@ jobs:
           echo "Building frontend with API URL: $NEXT_PUBLIC_API_URL"
           npm run build
 
-      - name: Prepare standalone package with dependencies
+      - name: Create deployment zip
         run: |
-          cp package.json .next/standalone/
-          cp package-lock.json .next/standalone/
-          cp -R node_modules .next/standalone/
+          cd .next/standalone
+          zip -r ../../deploy.zip .
 
       - name: Azure Login
         uses: azure/login@v1
@@ -47,5 +46,5 @@ jobs:
         uses: azure/webapps-deploy@v2
         with:
           app-name: ${{ secrets.FRONTEND_WEBAPP_NAME }}
-          package: frontend/.next/standalone
+          package: frontend/deploy.zip
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
