@@ -22,7 +22,7 @@ export function subscribeToJobProgress(
 ): () => void {
   let eventSource: EventSource | null = null;
   let reconnectTimeout: NodeJS.Timeout | null = null;
-  const url = `${API_BASE_URL}/api/progress/${jobId}/sse`;
+  const url = `${API_BASE_URL}/api/progress/${jobId}`;
 
   console.log(`[SSE Client] Connecting to: ${url}`);
 
