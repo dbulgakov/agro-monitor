@@ -7,8 +7,8 @@ from azure.storage.blob import BlobServiceClient
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
-from functions.lib.helpers.env_helpers import check_environment_variables, get_required_env_vars
-from functions.lib.schemas import ReportData, ErrorResponse, ProgressUpdate, JobStatus
+from shared_code.helpers.env_helpers import check_environment_variables, get_required_env_vars
+from shared_code.schemas import ReportData, ErrorResponse, ProgressUpdate, JobStatus
 
 router = APIRouter(tags=["Report"])
 

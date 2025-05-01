@@ -8,13 +8,13 @@ import numpy as np
 import azure.functions as func
 from azure.storage.blob.aio import BlobServiceClient
 
-from functions.lib.helpers.blob import upload_image_to_blob, upload_report_to_blob, get_async_blob_service_client
-from functions.lib.helpers.image_helpers import create_ndvi_buffer, create_rgb_buffer
-from functions.lib.helpers.job_status import update_job_status, get_job_status
-from functions.lib.helpers.openai_helpers import generate_openai_recommendations
-from functions.lib.helpers.raster_helpers import read_band, read_rgb
-from functions.lib.helpers.sentinel_helpers import get_sentinel2_urls
-from functions.lib.schemas import JobStatus, StartAnalysisPayload, ReportData
+from shared_code.helpers.blob import upload_image_to_blob, upload_report_to_blob, get_async_blob_service_client
+from shared_code.helpers.image_helpers import create_ndvi_buffer, create_rgb_buffer
+from shared_code.helpers.job_status import update_job_status, get_job_status
+from shared_code.helpers.openai_helpers import generate_openai_recommendations
+from shared_code.helpers.raster_helpers import read_band, read_rgb
+from shared_code.helpers.sentinel_helpers import get_sentinel2_urls
+from shared_code.schemas import JobStatus, StartAnalysisPayload, ReportData
 
 _CMAP = None  # Colormap defined in helpers
 _NORM = None  # Normalizer defined in helpers

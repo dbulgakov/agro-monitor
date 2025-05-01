@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, Path, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from azure.storage.blob.aio import BlobServiceClient
 
-from functions.lib.helpers.env_helpers import check_environment_variables, get_required_env_vars
-from functions.lib.schemas import ProgressUpdate, JobStatus, ErrorResponse
+from shared_code.helpers.env_helpers import check_environment_variables, get_required_env_vars
+from shared_code.schemas import ProgressUpdate, JobStatus, ErrorResponse
 
 router = APIRouter(tags=["Progress", "SSE"])
 

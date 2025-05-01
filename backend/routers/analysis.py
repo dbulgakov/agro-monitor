@@ -6,9 +6,9 @@ from azure.storage.queue.aio import QueueClient
 from azure.storage.blob.aio import BlobServiceClient
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 
-from functions.lib.helpers.job_status import update_job_status
-from functions.lib.helpers.env_helpers import check_environment_variables, get_required_env_vars
-from functions.lib.schemas import StartAnalysisResponse, StartAnalysisPayload, JobStatus, ErrorResponse
+from shared_code.helpers.job_status import update_job_status
+from shared_code.helpers.env_helpers import check_environment_variables, get_required_env_vars
+from shared_code.schemas import StartAnalysisResponse, StartAnalysisPayload, JobStatus, ErrorResponse
 
 router = APIRouter(tags=["Analysis"])
 
