@@ -28,12 +28,25 @@ async def get_sentinel2_urls(job_id: str, geometry: dict, date_range: str, bands
         signed = await asyncio.to_thread(planetary_computer.sign, least)
         urls = {}
         missing = []
-        for b in bands:
-            asset = signed.assets.get(b)
+        
+        band_map = {
+            'nir': 'B08',
+            'red': 'B04',
+            'visual': 'visual'  # Keep visual as is for now, may need TCI later
+        }
+
+        for requested_band in bands:
+            asset_key = band_map.get(requested_band)
+            if not asset_key:
+                log_adapter.warning(f"Requested band '{requested_band}' not in known map, skipping.")
+                missing.append(f"{requested_band} (unknown)")
+                continue
+                
+            asset = signed.assets.get(asset_key)
             if asset:
-                urls[b] = asset.href
+                urls[requested_band] = asset.href # Store URL using the requested name
             else:
-                missing.append(b)
+                missing.append(requested_band) # Report missing using requested name
         if missing:
             raise ValueError(f"Missing bands: {missing}")
         return urls
