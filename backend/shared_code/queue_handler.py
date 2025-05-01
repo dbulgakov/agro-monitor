@@ -139,20 +139,26 @@ async def read_bands(job_id: str, urls: Dict[str, str]) -> (np.ndarray, np.ndarr
     await update_status(get_client(), job_id, JobStatus.PROCESSING, 20, "Завантаження знімків")
     logger.info("Читання знімків NIR, RED, RGB")
 
-    async with aiohttp.ClientSession() as session:
-        nir_task = read_band(job_id, urls['nir'], session=session)
-        red_task = read_band(job_id, urls['red'], session=session)
-        rgb_task = read_rgb(job_id, urls.get('visual', ''), session=session)
+    results = [] # Initialize results
+    try:
+        async with aiohttp.ClientSession() as session:
+            nir_task = read_band(job_id, urls['nir'], session=session)
+            red_task = read_band(job_id, urls['red'], session=session)
+            rgb_task = read_rgb(job_id, urls.get('visual', ''), session=session)
 
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(nir_task, red_task, rgb_task, return_exceptions=True),
-                timeout=120,
-            )
-        except asyncio.TimeoutError:
-            raise RuntimeError("Читання знімків перевищило таймаут (120 сек)")
-        finally:
-            pass
+            gather_task = asyncio.gather(nir_task, red_task, rgb_task, return_exceptions=True)
+            results = await asyncio.wait_for(gather_task, timeout=120)
+            # Session is automatically closed here when exiting the 'async with' block
+    except asyncio.TimeoutError:
+        raise RuntimeError("Читання знімків перевищило таймаут (120 сек)")
+    finally:
+        # Give aiohttp's background cleanup tasks a chance to complete
+        await asyncio.sleep(0)
+        # pass # Original pass removed
+
+    # Check results after the session is closed and cleanup awaited
+    if not results: # Handle case where TimeoutError might have occurred before results assigned
+         raise RuntimeError("Не вдалося отримати результати читання знімків, можливо, через таймаут.")
 
     nir, red, rgb = results
     error_messages = []
