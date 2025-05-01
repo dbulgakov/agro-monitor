@@ -29,7 +29,11 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: 'Set up Azure Functions Core Tools'
+      - name: 'Ensure WEBSITE_RUN_FROM_PACKAGE is removed'
+        run: |
+          az functionapp config appsettings delete --name ${{ secrets.FUNC_API_APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP_NAME }} --setting-names WEBSITE_RUN_FROM_PACKAGE
+
+      - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
         with:
           app-name: ${{ secrets.FUNC_API_APP_NAME }}
