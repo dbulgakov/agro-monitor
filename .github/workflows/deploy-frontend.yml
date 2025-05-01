@@ -21,8 +21,11 @@ jobs:
           node-version: '18'
 
       - name: Install dependencies and build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ secrets.BACKEND_API_URL }}
         run: |
           npm ci --legacy-peer-deps
+          echo "Building frontend with API URL: $NEXT_PUBLIC_API_URL"
           npm run build
 
       - name: Bundle static assets for standalone
