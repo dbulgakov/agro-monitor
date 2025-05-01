@@ -87,11 +87,13 @@ cosmos_conn_string = documentdb.list_database_account_connection_strings_output(
     account_name=cosmosdb_account.name,
 ).connection_strings[0].connection_string
 
+func_rg = resources.ResourceGroup(f"{base_name}-func-rg", location=location, opts=retry_policy)
+
 func_plan = web.AppServicePlan(
     f"{base_name}-func-plan",
-    resource_group_name=rg.name,
+    resource_group_name=func_rg.name,
     kind="FunctionApp",
-    reserved=False,
+    reserved=True,
     sku=web.SkuDescriptionArgs(tier="Dynamic", name="Y1"),
     location=location,
     opts=retry_policy,
@@ -99,12 +101,13 @@ func_plan = web.AppServicePlan(
 
 func_app = web.WebApp(
     f"{base_name}-func-app",
-    resource_group_name=rg.name,
+    resource_group_name=func_rg.name,
     location=location,
     server_farm_id=func_plan.id,
-    kind="functionapp",
-    reserved=False,
+    kind="functionapp,linux",
+    reserved=True,
     site_config=web.SiteConfigArgs(
+        linux_fx_version="Python|3.11",
         app_settings=[
             web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
             web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
@@ -117,6 +120,7 @@ func_app = web.WebApp(
             web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value=reports_container.name),
             web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value=images_container.name),
             web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
+            web.NameValuePairArgs(name="SCM_SCRIPT_GENERATOR_ARGS", value="--platform nodejs --platform-version 18 -appPath frontend"),
             web.NameValuePairArgs(name="PROJECT", value="backend"),
         ],
         always_on=False
@@ -146,7 +150,6 @@ web_app = web.WebApp(
         linux_fx_version="NODE|18",
         app_settings=[
             web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
-            web.NameValuePairArgs(name="PROJECT", value="frontend"),
             web.NameValuePairArgs(
                 name="NEXT_PUBLIC_API_URL",
                 value=func_app.default_host_name.apply(lambda h: f"https://{h}")
