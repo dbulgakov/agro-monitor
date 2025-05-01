@@ -28,7 +28,7 @@ jobs:
       - name: Azure Login
         uses: azure/login@v1
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}  # Секрет для аутентификации в Azure
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Set WEBSITE_WEBDEPLOY_USE_SCM to true
         run: |
