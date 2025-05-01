@@ -61,42 +61,6 @@ app_settings = [
     web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value="reports"),
 ]
 
-# Define the front-end App Service Plan first
-front_plan = web.AppServicePlan(
-    "front-plan",
-    resource_group_name=rg.name,
-    location=rg.location,
-    kind="app",
-    sku=web.SkuDescriptionArgs(name="B1", tier="Basic"),
-    reserved=True,
-)
-
-# Placeholder for backend URL - will be defined after func_app
-# We need front_app defined to get its hostname for func_app CORS settings
-backend_api_url_output = pulumi.Output.concat("https://", func_app.default_host_name) 
-
-# Define the front-end Web App
-front_app = web.WebApp(
-    "frontend",
-    resource_group_name=rg.name,
-    location=rg.location,
-    server_farm_id=front_plan.id,
-    kind="app",
-    site_config=web.SiteConfigArgs(
-        linux_fx_version="NODE|18-lts",
-        app_command_line="node server.js",
-        app_settings=[
-            # Use the output directly here
-            web.NameValuePairArgs(name="NEXT_PUBLIC_API_URL", value=backend_api_url_output),
-        ]
-    ),
-    identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
-)
-
-# Now get the frontend origin for CORS
-frontend_origin = front_app.default_host_name.apply(lambda h: f"https://{h}")
-
-# Define the function app, using the frontend_origin
 func_app = web.WebApp(
     "func-api",
     resource_group_name=rg.name,
@@ -107,14 +71,38 @@ func_app = web.WebApp(
         app_settings=app_settings,
         linux_fx_version="Python|3.11",
         cors=web.CorsSettingsArgs(
-            allowed_origins=pulumi.Output.all(frontend_origin).apply(lambda args: [args[0], "http://localhost:3000"]),
+            allowed_origins=["*"],
         ),
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
 )
 
-# Define the final backend_api_url string based on the func_app output
 backend_api_url = func_app.default_host_name.apply(lambda h: f"https://{h}")
+
+front_plan = web.AppServicePlan(
+    "front-plan",
+    resource_group_name=rg.name,
+    location=rg.location,
+    kind="app",
+    sku=web.SkuDescriptionArgs(name="B1", tier="Basic"),
+    reserved=True,
+)
+
+front_app = web.WebApp(
+    "frontend",
+    resource_group_name=rg.name,
+    location=rg.location,
+    server_farm_id=front_plan.id,
+    kind="app",
+    site_config=web.SiteConfigArgs(
+        linux_fx_version="NODE|18-lts",
+        app_command_line="node server.js",
+        app_settings=[
+            web.NameValuePairArgs(name="NEXT_PUBLIC_API_URL", value=backend_api_url),
+        ]
+    ),
+    identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
+)
 
 pulumi.export("function_app_endpoint", backend_api_url)
 pulumi.export("frontend_endpoint", front_app.default_host_name.apply(lambda h: f"https://{h}"))
