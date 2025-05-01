@@ -39,3 +39,14 @@ jobs:
           app-name: ${{ secrets.FUNC_API_APP_NAME }}
           package: backend
           publish-profile: ${{ secrets.FUNC_API_PUBLISH_PROFILE }}
+
+      - name: Set WEBSITE_WEBDEPLOY_USE_SCM to true
+        run: |
+          az functionapp config appsettings set --name ${{ secrets.FUNC_API_APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP_NAME }} --settings WEBSITE_WEBDEPLOY_USE_SCM=true
+
+      - name: Deploy to Azure Function App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ secrets.FUNC_API_APP_NAME }}
+          package: backend
+          publish-profile: ${{ secrets.FUNC_API_PUBLISH_PROFILE }}
