@@ -30,9 +30,9 @@ fastapi_app = FastAPI(
     lifespan=lifespan,
 )
 
-fastapi_app.include_router(analysis_router, prefix="/analyze")
-fastapi_app.include_router(report_router, prefix="/report")
-fastapi_app.include_router(progress_router, prefix="/progress")
+fastapi_app.include_router(analysis_router, prefix="/api/analyze")
+fastapi_app.include_router(report_router, prefix="/api/report")
+fastapi_app.include_router(progress_router, prefix="/api/progress")
 
 @fastapi_app.get("/", include_in_schema=False)
 async def read_root():

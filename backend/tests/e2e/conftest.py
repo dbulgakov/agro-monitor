@@ -83,8 +83,8 @@ async def images_container_client(blob_service_client, images_container_name):
 
 @pytest.fixture(scope="function")
 async def client(blob_service_client, queue_service_client):
-    from app import app
-    app.state.blob_service_client = blob_service_client
-    app.state.queue_service_client = queue_service_client
-    async with AsyncClient(app=app, base_url="http://testserver") as ac:
+    from function_app import fastapi_app
+    fastapi_app.state.blob_service_client = blob_service_client
+    fastapi_app.state.queue_service_client = queue_service_client
+    async with AsyncClient(app=fastapi_app, base_url="http://testserver") as ac:
         yield ac

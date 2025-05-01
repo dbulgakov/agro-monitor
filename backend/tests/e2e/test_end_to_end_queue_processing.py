@@ -3,8 +3,11 @@ import json
 import numpy as np
 import pytest
 from fastapi import status
-from functions.lib.schemas import JobStatus, ReportData, ProgressUpdate
-from functions.process_analysis_job.main import process_analysis
+from unittest.mock import patch
+
+from shared_code.schemas import JobStatus, ReportData, ProgressUpdate
+from shared_code.helpers.job_status import update_job_status, get_job_status
+from process_analysis_job.main import process_analysis
 
 class DummyMsg:
     def __init__(self, content: str):
@@ -19,7 +22,7 @@ def stub_external_services(monkeypatch):
     async def fake_fetch_band_urls(job_id, payload):
         return {"nir": "dummy_url", "red": "dummy_url"}
     monkeypatch.setattr(
-        "functions.process_analysis_job.main.fetch_band_urls",
+        "process_analysis_job.main.fetch_band_urls",
         fake_fetch_band_urls,
     )
 
@@ -27,7 +30,7 @@ def stub_external_services(monkeypatch):
     async def fake_read_and_compute_ndvi(job_id, urls):
         return np.zeros((5, 5)), None
     monkeypatch.setattr(
-        "functions.process_analysis_job.main.read_and_compute_ndvi",
+        "process_analysis_job.main.read_and_compute_ndvi",
         fake_read_and_compute_ndvi,
     )
 
@@ -35,7 +38,7 @@ def stub_external_services(monkeypatch):
     async def fake_generate_openai_recommendations(job_id, ndvi, mask, crop_type):
         return "Mocked recommendation"
     monkeypatch.setattr(
-        "functions.process_analysis_job.main.generate_openai_recommendations",
+        "process_analysis_job.main.generate_openai_recommendations",
         fake_generate_openai_recommendations,
     )
 

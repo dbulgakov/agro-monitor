@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import status
-from functions.lib.schemas import JobStatus
-from functions.lib.helpers.job_status import update_job_status, get_job_status
-from functions.process_analysis_job.main import process_analysis
+from shared_code.schemas import JobStatus
+from shared_code.helpers.job_status import update_job_status, get_job_status
+from process_analysis_job.main import process_analysis
 from .test_end_to_end_queue_processing import DummyMsg
 
 async def test_analyze_invalid_payload(client):
@@ -31,7 +31,7 @@ async def test_report_for_nonexistent_job(client):
     response = await client.get("/api/report/nonexistent-job")
     assert response.status_code == 404
 
-@patch("functions.process_analysis_job.main.fetch_band_urls")
+@patch("process_analysis_job.main.fetch_band_urls")
 async def test_job_failure_simulation(
     mock_fetch_urls,
     client,
