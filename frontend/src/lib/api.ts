@@ -59,21 +59,28 @@ export interface JobProgress {
 // Helper function to handle fetch errors
 async function handleApiError(response: Response): Promise<Error> {
   let errorMsg = `API Error: ${response.status} ${response.statusText}`;
-  let errorDetails: any = null;
+  // Use 'unknown' instead of 'any' for better type safety
+  let errorDetails: unknown = null; 
   try {
       const errorData = await response.json();
       // Try to extract a meaningful message from common error response formats
-      errorMsg = errorData.detail || errorData.message || errorData.error || errorMsg;
-      errorDetails = errorData.details || errorData;
-  } catch (e) {
+      // Type assertion needed after checking properties
+      if (typeof errorData === 'object' && errorData !== null) {
+          errorMsg = (errorData as any).detail || (errorData as any).message || (errorData as any).error || errorMsg;
+          errorDetails = (errorData as any).details || errorData;
+      } else {
+          errorDetails = errorData; // Keep original if not object
+      }
+  } catch (parseError) { // Give the catch variable a name
       // If response body is not JSON or empty, use the status text
-      console.warn("Could not parse error response body as JSON.");
+      console.warn("Could not parse error response body as JSON:", parseError);
   }
   console.error('API Call Failed:', errorMsg, 'Details:', errorDetails);
   // Consider creating a custom error class
   const error = new Error(errorMsg);
-  (error as any).status = response.status;
-  (error as any).details = errorDetails;
+  // Attach details more safely if needed, or omit these lines if not strictly necessary
+  // (error as any).status = response.status; // Avoid 'any' if possible
+  // (error as any).details = errorDetails;
   return error;
 }
 

@@ -77,7 +77,10 @@ const MapSelector = forwardRef<MapSelectorRef, MapSelectorProps>(({ onAreaSelect
   }, []);
 
   // --- Handlers for Leaflet Draw --- //
-  const handleCreated = (e: any) => {
+  // Type for Leaflet Draw events (replace 'any')
+  type DrawEventType = L.LeafletEvent & { layer: L.Layer, layers?: L.LayerGroup };
+  
+  const handleCreated = (e: DrawEventType) => {
     const layer = e.layer;
     // Clear previous layer if any
     featureGroupRef.current?.clearLayers();
@@ -88,6 +91,9 @@ const MapSelector = forwardRef<MapSelectorRef, MapSelectorProps>(({ onAreaSelect
     onAreaSelect(geoJson); // Pass GeoJSON to parent
   };
 
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  // Keep handlers for potential future use or complete removal if unused
   const handleEdited = (e: any) => {
     e.layers.eachLayer((layer: any) => {
       setSelectedLayer(layer);
@@ -113,7 +119,19 @@ const MapSelector = forwardRef<MapSelectorRef, MapSelectorProps>(({ onAreaSelect
         onAreaSelect(null);
     }
   };
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleDrawStart = (e: L.LeafletEvent & { layerType: string }) => {
+      // console.log('Draw start:', e.layerType);
+  };
   
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleDrawStop = (e: L.LeafletEvent & { layerType: string }) => {
+      // console.log('Draw stop:', e.layerType);
+  };
+
   const handleMapReady = (mapInstance: L.Map) => {
       mapRef.current = mapInstance;
       setMapReady(true);
@@ -143,12 +161,16 @@ const MapSelector = forwardRef<MapSelectorRef, MapSelectorProps>(({ onAreaSelect
                 <EditControl
                     position="topright"
                     onCreated={handleCreated}
+                    // onEdited={handleEdited} // Comment out unused handler
+                    // onDeleted={handleDeleted} // Comment out unused handler
+                    // onDrawStart={handleDrawStart}
+                    // onDrawStop={handleDrawStop}
                     draw={{
                         rectangle: false,
-                        polygon: { 
-                            allowIntersection: false, 
-                            drawError: { color: '#ef4444', message: 'Самоперетин заборонено!' }, 
-                            shapeOptions: { color: '#3b82f6' } 
+                        polygon: {
+                            allowIntersection: false,
+                            drawError: { color: '#ef4444', message: 'Самоперетин заборонено!' },
+                            shapeOptions: { color: '#3b82f6' }
                         },
                         circle: false,
                         circlemarker: false,

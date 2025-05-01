@@ -4,7 +4,7 @@ import React from 'react';
 import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
 import { ReportData } from '@/lib/api'; // Import the full ReportData type
-import { FeatureCollection, Point, Polygon } from 'geojson';
+import { FeatureCollection, Point, Polygon, Feature } from 'geojson';
 
 // Dynamically import Leaflet components
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
@@ -26,8 +26,8 @@ const ReportView: React.FC<ReportViewProps> = ({ reportData }) => {
   const { resultGeoJson, selectedArea, mapCenter = [50.45, 30.52], mapZoom = 13 } = reportData;
 
   // Style function for analysis result GeoJSON layers (colored zones)
-  const styleResultFeature = (feature: any) => {
-    const properties = feature?.properties as HealthProperties | undefined;
+  const styleResultFeature = (feature: Feature<Polygon | Point, HealthProperties> | undefined) => {
+    const properties = feature?.properties;
     const health = properties?.health || 'unknown';
     let color = 'gray'; 
     let fillOpacity = 0.5;
@@ -80,7 +80,7 @@ const ReportView: React.FC<ReportViewProps> = ({ reportData }) => {
             {hasResultFeatures && resultGeoJson && (
                <GeoJSON
                   key={"result-" + JSON.stringify(resultGeoJson)} // Key for result area
-                  data={resultGeoJson as FeatureCollection<Polygon|Point, any>} 
+                  data={resultGeoJson as FeatureCollection<Polygon|Point, HealthProperties>} 
                   style={styleResultFeature}
                 />
             )}
