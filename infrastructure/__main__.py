@@ -82,10 +82,12 @@ cosmosdb_account = documentdb.DatabaseAccount(
     opts=retry_policy,
 )
 
-cosmos_conn_string = documentdb.list_database_account_connection_strings_output(
-    resource_group_name=rg.name,
-    account_name=cosmosdb_account.name,
-).connection_strings[0].connection_string
+cosmos_conn_string = cosmosdb_account.name.apply(
+    lambda name: documentdb.list_database_account_connection_strings_output(
+        resource_group_name=rg.name,
+        account_name=name,
+    ).connection_strings[0].connection_string
+)
 
 func_rg = resources.ResourceGroup(f"{base_name}-func-rg", location=location, opts=retry_policy)
 
@@ -99,8 +101,8 @@ func_plan = web.AppServicePlan(
     opts=retry_policy,
 )
 
-func_app = web.WebApp(
-    f"{base_name}-func-app",
+fastapi_func_app = web.WebApp(
+    f"{base_name}-func-api",
     resource_group_name=func_rg.name,
     location=location,
     server_farm_id=func_plan.id,
@@ -112,18 +114,15 @@ func_app = web.WebApp(
             web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
             web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
             web.NameValuePairArgs(name="AzureWebJobsStorage", value=storage_conn),
-            web.NameValuePairArgs(name="AZURE_STORAGE_CONNECTION_STRING", value=storage_conn),
             web.NameValuePairArgs(name="APPINSIGHTS_INSTRUMENTATIONKEY", value=ai.instrumentation_key),
             web.NameValuePairArgs(name="COSMOSDB_CONNECTION_STRING", value=cosmos_conn_string),
             web.NameValuePairArgs(name="OPENAI_API_KEY", value=openai_api_key),
             web.NameValuePairArgs(name="ANALYSIS_QUEUE_NAME", value=analysis_queue.name),
             web.NameValuePairArgs(name="REPORTS_CONTAINER_NAME", value=reports_container.name),
             web.NameValuePairArgs(name="IMAGES_CONTAINER_NAME", value=images_container.name),
-            web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
-            web.NameValuePairArgs(name="SCM_SCRIPT_GENERATOR_ARGS", value="--platform nodejs --platform-version 18 -appPath frontend"),
-            web.NameValuePairArgs(name="PROJECT", value="backend"),
-        ],
-        always_on=False
+            web.NameValuePairArgs(name="PYTHON_ENABLE_WORKER_EXTENSIONS", value="1"),
+            web.NameValuePairArgs(name="FUNCTIONS_WORKING_DIRECTORY", value="functions"),
+        ]
     ),
     https_only=True,
     opts=retry_policy,
@@ -150,12 +149,13 @@ web_app = web.WebApp(
         linux_fx_version="NODE|18",
         app_settings=[
             web.NameValuePairArgs(name="SCM_DO_BUILD_DURING_DEPLOYMENT", value="true"),
+            web.NameValuePairArgs(name="PROJECT", value="frontend"),
             web.NameValuePairArgs(
                 name="NEXT_PUBLIC_API_URL",
-                value=func_app.default_host_name.apply(lambda h: f"https://{h}")
+                value=fastapi_func_app.default_host_name.apply(lambda h: f"https://{h}")
             ),
         ],
-        always_on=False
+        always_on=False,
     ),
     https_only=True,
     opts=retry_policy,
@@ -163,12 +163,12 @@ web_app = web.WebApp(
 
 web.WebAppSourceControl(
     "backend-sc",
-    name=func_app.name,
-    resource_group_name=rg.name,
+    name=fastapi_func_app.name,
+    resource_group_name=func_rg.name,
     repo_url=git_repo_url,
     branch=git_branch,
     is_manual_integration=True,
-    opts=ResourceOptions(depends_on=[func_app]),
+    opts=ResourceOptions(depends_on=[fastapi_func_app]),
 )
 
 web.WebAppSourceControl(
@@ -181,7 +181,7 @@ web.WebAppSourceControl(
     opts=ResourceOptions(depends_on=[web_app]),
 )
 
-pulumi.export("backend_endpoint", func_app.default_host_name.apply(lambda h: f"https://{h}"))
+pulumi.export("backend_endpoint", fastapi_func_app.default_host_name.apply(lambda h: f"https://{h}"))
 pulumi.export("frontend_endpoint", web_app.default_host_name.apply(lambda h: f"https://{h}"))
 pulumi.export("storage_account_name", storage_account.name)
 pulumi.export("analysis_queue_name", analysis_queue.name)
