@@ -43,7 +43,7 @@ async def read_bands(job_id: str, urls: Dict[str, str]) -> (np.ndarray, np.ndarr
     results = await asyncio.gather(nir_task, red_task, rgb_task, return_exceptions=True)
     nir, red, rgb = results
     if isinstance(nir, Exception) or isinstance(red, Exception):
-        raise RuntimeError(f"Band read error(s): {[type(r).__name__ for r in results[:2]]}")
+        raise RuntimeError(f"Помилка читання смуг: {[type(r).__name__ for r in results[:2]]}")
     rgb = None if isinstance(rgb, Exception) else rgb
     return nir, red, rgb
 
@@ -68,7 +68,7 @@ async def validate_message(msg: func.QueueMessage) -> Optional[Dict]:
         data = json.loads(content)
         return {'job_id': data['jobId'], 'payload': data['payload']}
     except (json.JSONDecodeError, KeyError) as err:
-        logging.error(f"Invalid queue message: {err}")
+        logging.error(f"Неправильне повідомлення черги: {err}")
         return None
 
 async def fetch_band_urls(job_id: str, payload: StartAnalysisPayload) -> Dict[str, str]:
@@ -87,26 +87,31 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
     payload_dict = validated['payload']
     logger = logging.getLogger(__name__).getChild(job_id)
 
+    # валідую payload
     try:
         payload = StartAnalysisPayload.model_validate(payload_dict)
     except Exception as err:
-        logger.error(f"Payload validation error: {err}")
-        await update_status(client, job_id, JobStatus.FAILED, -1, f"Invalid payload: {err}")
+        logger.error(f"Помилка перевірки навантаження: {err}")
+        await update_status(client, job_id, JobStatus.FAILED, -1, f"Неправильне навантаження: {err}")
         return
 
+    # Пропускаємо, якщо job вже обробляється або завершено
     current = await get_job_status(client, job_id)
     if current and current.status in {JobStatus.PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED}:
         logger.info(f"Skipping; status is {current.status}")
         return
 
+    # Початковий статус виконання
+    await update_status(client, job_id, JobStatus.PROCESSING, 0, "Початок обробки")
+
     try:
-        await update_status(client, job_id, JobStatus.PROCESSING, 10, "Acquiring data")
+        await update_status(client, job_id, JobStatus.PROCESSING, 10, "Отримання даних")
         urls = await fetch_band_urls(job_id, payload)
 
-        await update_status(client, job_id, JobStatus.PROCESSING, 30, "Reading data and computing NDVI")
+        await update_status(client, job_id, JobStatus.PROCESSING, 30, "Читання даних та обчислення NDVI")
         ndvi, rgb = await read_and_compute_ndvi(job_id, urls)
 
-        await update_status(client, job_id, JobStatus.PROCESSING, 60, "Creating and uploading visualizations")
+        await update_status(client, job_id, JobStatus.PROCESSING, 60, "Створення та завантаження візуалізацій")
         ndvi_buf = create_ndvi_buffer(ndvi)
         tasks = [upload_image_to_blob(client, job_id, ndvi_buf, "ndvi_map.png")]
         if rgb is not None:
@@ -115,12 +120,12 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
         ndvi_url, *rest = await asyncio.gather(*tasks)
         rgb_url = rest[0] if rest else None
 
-        await update_status(client, job_id, JobStatus.PROCESSING, 80, "Generating recommendations")
+        await update_status(client, job_id, JobStatus.PROCESSING, 80, "Генерація рекомендацій")
         threshold = getattr(payload, 'ndvi_threshold', 0.3)
         mask = ndvi < threshold
         recs = await generate_openai_recommendations(job_id, ndvi, mask, payload.crop_type)
 
-        await update_status(client, job_id, JobStatus.PROCESSING, 95, "Finalizing report")
+        await update_status(client, job_id, JobStatus.PROCESSING, 95, "Фіналізація звіту")
         stats = {
             'mean': float(np.mean(ndvi)),
             'min': float(np.min(ndvi)),
@@ -143,5 +148,5 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
         logger.info("Job completed successfully.")
 
     except Exception as err:
-        logger.error(f"Processing error: {err}", exc_info=True)
-        await update_status(client, job_id, JobStatus.FAILED, -1, f"Error: {err}")
+        logger.error(f"Помилка обробки: {err}", exc_info=True)
+        await update_status(client, job_id, JobStatus.FAILED, -1, f"Помилка: {err}")
