@@ -1,10 +1,10 @@
 // This file is no longer needed as SSE/SWR logic for progress has been removed.
 // You can delete this file or keep it empty. 
 
-import { JobProgress } from './api'; // Import the progress type
+import { JobProgress, API_BASE_URL } from './api'; // Import the progress type AND the base URL
 
-// Base URL for SSE endpoint
-const SSE_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // Use same base as API or dedicated one
+// Base URL for SSE endpoint - REMOVED, using imported API_BASE_URL
+// const SSE_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // Use same base as API or dedicated one
 
 interface SseCallbacks {
   onProgress: (data: JobProgress) => void;
@@ -22,7 +22,8 @@ export function subscribeToJobProgress(
 ): () => void {
   let eventSource: EventSource | null = null;
   let reconnectTimeout: NodeJS.Timeout | null = null;
-  const url = `${SSE_BASE_URL}/progress/${jobId}`;
+  // const url = `${SSE_BASE_URL}/progress/${jobId}`; // OLD URL construction
+  const url = `${API_BASE_URL}/progress/${jobId}`; // Use imported API_BASE_URL
 
   const connect = () => {
     if (eventSource) {

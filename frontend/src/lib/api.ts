@@ -1,8 +1,20 @@
 // Placeholder for API interaction functions
 import { Feature, Polygon, Point, FeatureCollection } from 'geojson';
 
-// Base URL for your backend API
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // Use environment variable or proxy
+// Determine base URL based on environment and export it
+export const API_BASE_URL: string = (() => { 
+  if (process.env.NODE_ENV === 'development') {
+    // Use relative path for local mock APIs served by Next.js dev server
+    console.log('[API Lib] Using local mock API base URL:', '/api');
+    return '/api';
+  } else {
+    // Use environment variable for production/deployed environments
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    console.log('[API Lib] Using configured API base URL:', apiUrl || '/api (fallback)');
+    // Fallback to /api is unlikely needed in production but kept as a safeguard
+    return apiUrl || '/api'; 
+  }
+})(); // Immediately invoke the function to assign to the const
 
 // --- Types --- //
 export type CropType = "wheat" | "corn" | "sunflower" | "soy";
