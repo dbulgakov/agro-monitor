@@ -3,6 +3,7 @@ import io
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional, Dict
+import json
 
 import numpy as np
 import azure.functions as func
@@ -22,10 +23,19 @@ async def update_status(client: BlobServiceClient, job_id: str, status: JobStatu
 
 async def validate_message(msg: func.QueueMessage) -> Optional[Dict]:
     try:
-        data = msg.get_json()
+        content = msg.get_body().decode('utf-8')
+        logging.info(f"Validating message content: {content}")
+        
+        data = json.loads(content)
         job_id = data['jobId']
         payload = data['payload']
         return {'job_id': job_id, 'payload': payload}
+    except json.JSONDecodeError as err:
+        logging.error(f"Invalid JSON in queue message: {err}")
+        return None
+    except KeyError as err:
+        logging.error(f"Missing required field in queue message: {err}")
+        return None
     except Exception as err:
         logging.error(f"Invalid queue message: {err}")
         return None
@@ -42,7 +52,7 @@ async def read_and_compute_ndvi(job_id: str, urls: Dict[str, str]) -> (np.ndarra
     results = await asyncio.gather(
         read_band(job_id, urls['nir']),
         read_band(job_id, urls['red']),
-        read_rgb(job_id, urls.get('visual', '')),  # optional
+        read_rgb(job_id, urls.get('visual', '')),
         return_exceptions=True,
     )
     nir, red, rgb = results

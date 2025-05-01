@@ -13,6 +13,8 @@ from shared_code.schemas import ProgressUpdate, JobStatus, ErrorResponse
 
 router = APIRouter(tags=["Progress", "SSE"])
 
+logger = logging.getLogger(__name__)
+
 async def get_blob_client(job_id: str):
     conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     container = os.getenv("REPORTS_CONTAINER_NAME")
@@ -25,15 +27,19 @@ async def progress_event_generator(job_id: str, request: Request):
     blob_client = await get_blob_client(job_id)
     last = None
     interval = float(os.getenv("PROGRESS_CHECK_INTERVAL_SECONDS", "5"))
-    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "5"))
+    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "60"))  # Increased from 5 to 60 (5 minutes with 5s interval)
     check_count = 0
+    
+    logger.info(f"Starting progress monitoring for job {job_id}")
     
     while True:
         if await request.is_disconnected():
+            logger.info(f"Client disconnected for job {job_id}")
             break
             
         if check_count >= max_checks:
-            yield f"event: timeout\ndata: {json.dumps({'message': 'Progress check timeout'})}\n\n"
+            logger.warning(f"Progress check timeout for job {job_id} after {check_count} attempts")
+            yield f"event: timeout\ndata: {json.dumps({'message': f'Progress check timeout after {max_checks * interval} seconds'})}\n\n"
             break
             
         try:
@@ -41,17 +47,20 @@ async def progress_event_generator(job_id: str, request: Request):
                 data = await (await blob_client.download_blob()).readall()
                 upd = ProgressUpdate.model_validate_json(data)
                 payload = upd.model_dump()
+                logger.debug(f"Progress update for job {job_id}: {payload}")
             else:
                 if check_count == 0:
                     payload = ProgressUpdate(
                         jobId=job_id,
                         status=JobStatus.PENDING,
                         progress=0,
+                        message="Analysis request received",
                         timestamp=time.time()
                     ).model_dump()
                     yield f"event: progress\ndata: {json.dumps(payload)}\n\n"
                 break
         except Exception as e:
+            logger.error(f"Error checking progress for job {job_id}: {str(e)}")
             err = ErrorResponse(message=str(e)).model_dump()
             yield f"event: error\ndata: {json.dumps(err)}\n\n"
             break
@@ -62,6 +71,7 @@ async def progress_event_generator(job_id: str, request: Request):
             yield f"event: {event_type}\ndata: {s}\n\n"
             last = s
             if event_type == "complete":
+                logger.info(f"Job {job_id} completed with status {payload['status']}")
                 break
 
         check_count += 1
