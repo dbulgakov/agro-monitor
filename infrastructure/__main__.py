@@ -105,6 +105,7 @@ front_app = web.WebApp(
     kind="app",
     site_config=web.SiteConfigArgs(
         linux_fx_version="NODE|18-lts",
+        app_command_line="node server.js",
     ),
     identity=web.ManagedServiceIdentityArgs(type="SystemAssigned"),
 )

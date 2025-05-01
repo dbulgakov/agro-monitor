@@ -25,18 +25,6 @@ jobs:
           npm ci --legacy-peer-deps
           npm run build
 
-      - name: Prepare standalone package for deployment
-        run: |
-          # Ensure the target directory structure exists
-          mkdir -p ./.next/standalone/.next
-          # Copy static assets required by the standalone server
-          cp -R ./.next/static ./.next/standalone/.next/static
-          # Copy public folder if it exists and is needed
-          if [ -d "./public" ]; then
-            cp -R ./public ./.next/standalone/public
-          fi
-        working-directory: frontend
-
       - name: Azure Login
         uses: azure/login@v1
         with:
