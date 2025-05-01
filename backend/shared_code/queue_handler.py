@@ -15,9 +15,8 @@ from azure.storage.blob import ContentSettings
 from shared_code.helpers.job_status import update_job_status, get_job_status
 from shared_code.helpers.openai_helpers import generate_openai_recommendations
 from shared_code.helpers.raster_helpers import read_band, read_rgb
-# from shared_code.helpers.sentinel_helpers import get_sentinel2_urls
 from pystac_client import Client
-from datetime import date, timedelta
+from planetary_computer import sign
 from shared_code.schemas import JobStatus, StartAnalysisPayload, ReportData
 
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -56,62 +55,45 @@ def create_rgb_buffer(rgb: np.ndarray) -> io.BytesIO:
     buf.seek(0)
     return buf
 
-async def upload_image_to_blob(
-    client: BlobServiceClient,
-    job_id: str,
-    image_buffer: io.BytesIO,
-    image_name: str
-) -> Optional[str]:
-    log_adapter = logging.getLogger(__name__).getChild(job_id)
+async def upload_image_to_blob(client: BlobServiceClient, job_id: str, image_buffer: io.BytesIO, image_name: str) -> Optional[str]:
+    log = logging.getLogger(__name__).getChild(job_id)
     try:
         blob_name = f"{job_id}/{image_name}"
         blob_client = client.get_blob_client(container=IMAGES_CONTAINER_NAME, blob=blob_name)
         image_buffer.seek(0)
-        data = image_buffer.getvalue()
         await blob_client.upload_blob(
-            data,
+            image_buffer.getvalue(),
             overwrite=True,
             content_settings=ContentSettings(content_type="image/png"),
         )
-        log_adapter.info(f"Uploaded image to {blob_client.url}")
+        log.info(f"Зображення завантажено: {blob_client.url}")
         return blob_client.url
     except Exception as e:
-        log_adapter.error(f"Failed to upload image: {e}", exc_info=True)
+        log.error(f"Помилка завантаження зображення: {e}", exc_info=True)
         return None
 
-async def upload_report_to_blob(
-    client: BlobServiceClient,
-    job_id: str,
-    report_data: ReportData
-):
-    log_adapter = logging.getLogger(__name__).getChild(job_id)
+async def upload_report_to_blob(client: BlobServiceClient, job_id: str, report_data: ReportData):
+    log = logging.getLogger(__name__).getChild(job_id)
     try:
         blob_name = f"{job_id}/report.json"
         blob_client = client.get_blob_client(container=REPORTS_CONTAINER_NAME, blob=blob_name)
-        report_json = report_data.model_dump_json(exclude_none=True)
         await blob_client.upload_blob(
-            report_json.encode("utf-8"),
+            report_data.model_dump_json(exclude_none=True).encode("utf-8"),
             overwrite=True,
             metadata={}
         )
-        log_adapter.info("Uploaded final report.")
+        log.info("Фінальний звіт завантажено")
     except Exception as e:
-        log_adapter.error(f"Failed to upload report: {e}", exc_info=True)
+        log.error(f"Помилка завантаження звіту: {e}", exc_info=True)
         raise
 
-async def update_status(
-    client: BlobServiceClient,
-    job_id: str,
-    status: JobStatus,
-    progress: int,
-    message: str,
-):
+async def update_status(client: BlobServiceClient, job_id: str, status: JobStatus, progress: int, message: str):
     await update_job_status(client, job_id, status, progress, message)
 
 async def validate_message(msg: func.QueueMessage) -> Optional[Dict]:
     try:
         content = msg.get_body().decode('utf-8')
-        logging.info(f"Validating message content: {content}")
+        logging.info(f"Отримано повідомлення: {content}")
         data = json.loads(content)
         return {'job_id': data['jobId'], 'payload': data['payload']}
     except (json.JSONDecodeError, KeyError) as err:
@@ -119,18 +101,19 @@ async def validate_message(msg: func.QueueMessage) -> Optional[Dict]:
         return None
 
 async def fetch_band_urls(job_id: str, payload: StartAnalysisPayload) -> Dict[str, str]:
+    logger = logging.getLogger(__name__).getChild(job_id)
     await update_status(get_client(), job_id, JobStatus.PROCESSING, 15, "Отримання URL знімків")
 
+    logger.info("Пошук знімків у Planetary Computer")
     catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
 
-    # Extract start and end dates from the ISO-8601 interval string (YYYY-MM-DD/YYYY-MM-DD)
     try:
         start_date_str, end_date_str = payload.date_range.split("/")
     except ValueError:
         raise RuntimeError(f"Неправильний формат date_range: {payload.date_range}")
 
-    # Microsoft Planetary Computer STAC API accepts the same interval format directly
     datetime_range = f"{start_date_str}/{end_date_str}"
+    logger.info(f"Діапазон дат: {datetime_range}")
 
     items = catalog.search(
         collections=["sentinel-2-l2a"],
@@ -143,41 +126,40 @@ async def fetch_band_urls(job_id: str, payload: StartAnalysisPayload) -> Dict[st
     if not items:
         raise RuntimeError("Не знайдено відповідних знімків Sentinel-2")
 
-    item = items[0]
-    asset_urls = {
+    item = sign(items[0])
+    logger.info("Знімок знайдено")
+    return {
         'nir': item.assets['B08'].href,
         'red': item.assets['B04'].href,
-        'visual': item.assets['visual'].href if 'visual' in item.assets else item.assets['B04'].href,
+        'visual': item.assets.get('visual', item.assets['B04']).href,
     }
-    return asset_urls
 
 async def read_bands(job_id: str, urls: Dict[str, str]) -> (np.ndarray, np.ndarray, Optional[np.ndarray]):
+    logger = logging.getLogger(__name__).getChild(job_id)
     await update_status(get_client(), job_id, JobStatus.PROCESSING, 20, "Завантаження знімків")
+    logger.info("Читання знімків NIR, RED, RGB")
+
     nir_task = read_band(job_id, urls['nir'])
     red_task = read_band(job_id, urls['red'])
     rgb_task = read_rgb(job_id, urls.get('visual', ''))
+
     try:
         results = await asyncio.wait_for(
             asyncio.gather(nir_task, red_task, rgb_task, return_exceptions=True),
             timeout=60,
         )
     except asyncio.TimeoutError:
-        raise RuntimeError("Зчитування знімків перевищило таймаут")
+        raise RuntimeError("Читання знімків перевищило таймаут")
 
     nir, red, rgb = results
     if isinstance(nir, Exception) or isinstance(red, Exception):
-        errors = []
-        if isinstance(nir, Exception):
-            errors.append(f"NIR band error: {nir}")
-        if isinstance(red, Exception):
-            errors.append(f"Red band error: {red}")
-        # Optionally include RGB error if relevant
-        # if len(results) > 2 and isinstance(results[2], Exception):
-        #     errors.append(f"RGB band error: {results[2]}")
-        error_details = "; ".join(errors)
-        raise RuntimeError(f"Помилка читання смуг: {error_details}")
-    rgb = None if isinstance(rgb, Exception) else rgb
-    return nir, red, rgb
+        error_msg = "; ".join(
+            [f"NIR band error: {nir}" if isinstance(nir, Exception) else "",
+             f"Red band error: {red}" if isinstance(red, Exception) else ""]
+        )
+        raise RuntimeError(f"Помилка читання смуг: {error_msg}")
+
+    return nir, red, None if isinstance(rgb, Exception) else rgb
 
 async def read_and_compute_ndvi(job_id: str, urls: Dict[str, str]) -> (np.ndarray, Optional[np.ndarray]):
     nir, red, rgb = await read_bands(job_id, urls)
@@ -193,6 +175,8 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
     payload_dict = validated['payload']
     logger = logging.getLogger(__name__).getChild(job_id)
 
+    logger.info("Початок аналізу NDVI")
+
     try:
         payload = StartAnalysisPayload.model_validate(payload_dict)
     except Exception as err:
@@ -202,16 +186,16 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
 
     current = await get_job_status(client, job_id)
     if current and current.status in {JobStatus.PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED}:
-        logger.info(f"Skipping; status is {current.status}")
+        logger.info(f"Пропущено, бо статус: {current.status}")
         return
 
-    await update_status(client, job_id, JobStatus.PROCESSING, 0, "Початок обробки")
+    await update_status(client, job_id, JobStatus.PROCESSING, 0, "Початок обробки супутникових знімків")
 
     try:
         urls = await fetch_band_urls(job_id, payload)
         ndvi, rgb = await read_and_compute_ndvi(job_id, urls)
 
-        await update_status(client, job_id, JobStatus.PROCESSING, 60, "Створення та завантаження візуалізацій")
+        await update_status(client, job_id, JobStatus.PROCESSING, 60, "Створення візуалізацій")
         ndvi_buf = await asyncio.to_thread(create_ndvi_buffer, ndvi)
         tasks = [upload_image_to_blob(client, job_id, ndvi_buf, "ndvi_map.png")]
 
@@ -227,14 +211,12 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
         mask = ndvi < threshold
         recs = await generate_openai_recommendations(job_id, ndvi, mask, payload.crop_type)
 
-        await update_status(client, job_id, JobStatus.PROCESSING, 95, "Фіналізація звіту")
+        await update_status(client, job_id, JobStatus.PROCESSING, 95, "Формування звіту")
         stats = {
             'mean': float(np.mean(ndvi)),
             'min': float(np.min(ndvi)),
             'max': float(np.max(ndvi)),
-            'stress_percentage': (
-                float((mask & np.isfinite(ndvi)).sum() / np.isfinite(ndvi).sum() * 100)
-            ),
+            'stress_percentage': float((mask & np.isfinite(ndvi)).sum() / np.isfinite(ndvi).sum() * 100)
         }
         report = ReportData(
             jobId=job_id,
@@ -246,8 +228,8 @@ async def process_analysis(msg: func.QueueMessage, client: BlobServiceClient):
             recommendations=recs,
         )
         await upload_report_to_blob(client, job_id, report)
-        await update_status(client, job_id, JobStatus.COMPLETED, 100, "Analysis complete")
-        logger.info("Job completed successfully.")
+        await update_status(client, job_id, JobStatus.COMPLETED, 100, "Аналіз завершено успішно")
+        logger.info("Аналіз завершено успішно")
 
     except Exception as err:
         logger.error(f"Помилка обробки: {err}", exc_info=True)

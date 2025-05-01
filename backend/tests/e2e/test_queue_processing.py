@@ -109,7 +109,7 @@ async def test_queue_processing_end_to_end(
     last = status_updates[-1]
     assert last["progress"] == 100
     assert last["isComplete"] is True
-    assert "complete" in last["statusMessage"].lower()
+    assert "завершено" in last["statusMessage"].lower()
 
     # 7. Verify final status update in blob storage
     status_blob_client = reports_container_client.get_blob_client(f"{job_id}/status.json")
@@ -119,7 +119,7 @@ async def test_queue_processing_end_to_end(
     assert status_data.jobId == job_id
     assert status_data.status == JobStatus.COMPLETED
     assert status_data.progress == 100
-    assert status_data.message == "Analysis complete"
+    assert status_data.message == "Аналіз завершено успішно"
 
     # 8. Verify report blob content
     report_blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
