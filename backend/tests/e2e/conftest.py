@@ -15,6 +15,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env.test", override=True)
 
+@pytest.fixture(scope="function", autouse=True)
+def set_test_env_vars(monkeypatch):
+    """Sets environment variables for the test session."""
+    monkeypatch.setenv("PROGRESS_CHECK_INTERVAL_SECONDS", "0.2") # Use a short interval for testing SSE
+    monkeypatch.setenv("PROGRESS_MAX_CHECKS", "50")  # Allow enough polling iterations for completion
+
 @pytest.fixture(scope="function")
 async def blob_service_client():
     conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")

@@ -8,7 +8,7 @@ from fastapi import status
 from shared_code.schemas import JobStatus
 from shared_code.helpers.job_status import update_job_status, get_job_status
 from process_analysis_job.main import process_analysis
-from .test_end_to_end_queue_processing import DummyMsg
+from .test_utils import DummyMsg
 
 async def test_analyze_invalid_payload(client):
     response = await client.post("/api/analyze", json={"bad": "data"})
