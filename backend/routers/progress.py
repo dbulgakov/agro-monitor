@@ -24,8 +24,8 @@ async def get_blob_client(job_id: str):
 async def progress_event_generator(job_id: str, request: Request):
     blob_client = await get_blob_client(job_id)
     last = None
-    interval = float(os.getenv("PROGRESS_CHECK_INTERVAL_SECONDS", "2"))
-    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "3"))
+    interval = float(os.getenv("PROGRESS_CHECK_INTERVAL_SECONDS", "5"))
+    max_checks = int(os.getenv("PROGRESS_MAX_CHECKS", "5"))
     check_count = 0
     
     while True:
