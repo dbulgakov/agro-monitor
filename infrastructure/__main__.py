@@ -7,22 +7,16 @@ import pulumi_azure_native.documentdb as documentdb
 from pulumi import ResourceOptions
 
 config = pulumi.Config()
-location = config.require("azure-native:location")
-git_repo_url = config.require("azure-fastapi-demo:gitRepoUrl")
-git_branch = config.require("azure-fastapi-demo:gitBranch")
-openai_api_key = config.require("azure-fastapi-demo:openaiApiKey")
+location = config.require("location")
+git_repo_url = config.require("gitRepoUrl")
+git_branch = config.require("gitBranch")
+openai_api_key = config.require("openaiApiKey")
 
-# Basic retry policy
-retry_policy = ResourceOptions(
-    retry_on_errors=["429", "500", "502", "503", "504"],
-    max_retries=3,
-    retry_delay=5,
-)
-
+retry_policy = ResourceOptions()
 base_name = "agromonitor"
+
 rg = resources.ResourceGroup(f"{base_name}-rg", location=location, opts=retry_policy)
 
-# Storage Account (Free Tier compatible)
 storage_account = storage.StorageAccount(
     f"{base_name}sa",
     resource_group_name=rg.name,
@@ -41,48 +35,51 @@ storage_conn = pulumi.Output.all(storage_account.name, primary_storage_key).appl
     lambda args: f"DefaultEndpointsProtocol=https;AccountName={args[0]};AccountKey={args[1]};EndpointSuffix=core.windows.net"
 )
 
-# Storage containers and queue
 analysis_queue = storage.Queue(
     "analysis-requests",
     resource_group_name=rg.name,
     account_name=storage_account.name,
-    queue_name="analysis-requests"
+    queue_name="analysis-requests",
+    opts=retry_policy,
 )
 
 reports_container = storage.BlobContainer(
     "reports-container",
     resource_group_name=rg.name,
     account_name=storage_account.name,
-    container_name="reports"
+    container_name="reports",
+    opts=retry_policy,
 )
 
 images_container = storage.BlobContainer(
     "images-container",
     resource_group_name=rg.name,
     account_name=storage_account.name,
-    container_name="images"
+    container_name="images",
+    opts=retry_policy,
 )
 
-# Application Insights (Free Tier)
 ai = insights.Component(
     f"{base_name}-ai",
     resource_group_name=rg.name,
     kind="web",
     application_type=insights.ApplicationType.WEB,
     location=location,
+    ingestion_mode="ApplicationInsights",
+    opts=retry_policy,
 )
 
-# Cosmos DB (Serverless - Free Tier compatible)
 cosmosdb_account = documentdb.DatabaseAccount(
     f"{base_name}-cosmos",
     resource_group_name=rg.name,
     locations=[documentdb.LocationArgs(location_name=location, failover_priority=0)],
-    kind=documentdb.DatabaseKind.GLOBAL_DOCUMENT_DB,
+    kind="GlobalDocumentDB",
     database_account_offer_type=documentdb.DatabaseAccountOfferType.STANDARD,
     consistency_policy=documentdb.ConsistencyPolicyArgs(
         default_consistency_level=documentdb.DefaultConsistencyLevel.SESSION,
     ),
-    capabilities=[documentdb.CapabilityArgs(name="EnableServerless")]
+    capabilities=[documentdb.CapabilityArgs(name="EnableServerless")],
+    opts=retry_policy,
 )
 
 cosmos_conn_string = documentdb.list_database_account_connection_strings_output(
@@ -90,17 +87,14 @@ cosmos_conn_string = documentdb.list_database_account_connection_strings_output(
     account_name=cosmosdb_account.name,
 ).connection_strings[0].connection_string
 
-# Function App (Consumption Plan - Free Tier)
 func_plan = web.AppServicePlan(
     f"{base_name}-func-plan",
     resource_group_name=rg.name,
-    kind="Linux",
-    reserved=True,
-    sku=web.SkuDescriptionArgs(
-        tier="Dynamic",
-        name="Y1",
-    ),
+    kind="FunctionApp",
+    reserved=False,
+    sku=web.SkuDescriptionArgs(tier="Dynamic", name="Y1"),
     location=location,
+    opts=retry_policy,
 )
 
 func_app = web.WebApp(
@@ -108,10 +102,9 @@ func_app = web.WebApp(
     resource_group_name=rg.name,
     location=location,
     server_farm_id=func_plan.id,
-    kind="functionapp,linux",
-    reserved=True,
+    kind="functionapp",
+    reserved=False,
     site_config=web.SiteConfigArgs(
-        linux_fx_version="Python|3.11",
         app_settings=[
             web.NameValuePairArgs(name="FUNCTIONS_WORKER_RUNTIME", value="python"),
             web.NameValuePairArgs(name="FUNCTIONS_EXTENSION_VERSION", value="~4"),
@@ -129,19 +122,17 @@ func_app = web.WebApp(
         always_on=False
     ),
     https_only=True,
+    opts=retry_policy,
 )
 
-# Web App (Free Tier)
 web_plan = web.AppServicePlan(
     f"{base_name}-web-plan",
     resource_group_name=rg.name,
     kind="Linux",
     reserved=True,
-    sku=web.SkuDescriptionArgs(
-        tier="Free",
-        name="F1",
-    ),
+    sku=web.SkuDescriptionArgs(tier="Free", name="F1"),
     location=location,
+    opts=retry_policy,
 )
 
 web_app = web.WebApp(
@@ -164,9 +155,9 @@ web_app = web.WebApp(
         always_on=False
     ),
     https_only=True,
+    opts=retry_policy,
 )
 
-# Source control for both apps
 web.WebAppSourceControl(
     "backend-sc",
     name=func_app.name,
@@ -174,7 +165,7 @@ web.WebAppSourceControl(
     repo_url=git_repo_url,
     branch=git_branch,
     is_manual_integration=True,
-    opts=pulumi.ResourceOptions(depends_on=[func_app]),
+    opts=ResourceOptions(depends_on=[func_app]),
 )
 
 web.WebAppSourceControl(
@@ -184,10 +175,9 @@ web.WebAppSourceControl(
     repo_url=git_repo_url,
     branch=git_branch,
     is_manual_integration=True,
-    opts=pulumi.ResourceOptions(depends_on=[web_app]),
+    opts=ResourceOptions(depends_on=[web_app]),
 )
 
-# Export outputs
 pulumi.export("backend_endpoint", func_app.default_host_name.apply(lambda h: f"https://{h}"))
 pulumi.export("frontend_endpoint", web_app.default_host_name.apply(lambda h: f"https://{h}"))
 pulumi.export("storage_account_name", storage_account.name)

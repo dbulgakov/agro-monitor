@@ -39,10 +39,12 @@ pulumi login
 
 5. Set configuration values:
 ```bash
-pulumi config set azure-native:location westeurope
+pulumi config set azure-fastapi-demo:location northeurope
 pulumi config set azure-fastapi-demo:gitRepoUrl https://github.com/your-username/agro-monitor
 pulumi config set azure-fastapi-demo:gitBranch main
 pulumi config set azure-fastapi-demo:openaiApiKey your-openai-api-key
+
+az provider register --namespace Microsoft.OperationalInsights
 ```
 
 ## Deployment
