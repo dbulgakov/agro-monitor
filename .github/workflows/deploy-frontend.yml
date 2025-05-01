@@ -27,7 +27,7 @@ jobs:
 
       - name: Set WEBSITE_WEBDEPLOY_USE_SCM to true
         run: |
-          az webapp config appsettings set --name ${{ secrets.FRONTEND_WEBAPP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --settings WEBSITE_WEBDEPLOY_USE_SCM=true
+          az webapp config appsettings set --name ${{ secrets.FRONTEND_WEBAPP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP_NAME }} --settings WEBSITE_WEBDEPLOY_USE_SCM=true
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
