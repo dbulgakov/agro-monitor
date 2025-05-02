@@ -8,7 +8,6 @@ import CropTypeSelect from '@/components/CropTypeSelect';
 import FrequencySelect from '@/components/FrequencySelect';
 import ProgressBar from '@/components/ProgressBar'; // Import ProgressBar
 import { startAnalysis, CropType, AnalysisFrequency, AnalysisParameters, JobProgress } from '@/lib/api';
-import { subscribeToJobProgress } from '@/lib/sseClient'; // Import SSE subscriber
 import DatePicker, { registerLocale } from "react-datepicker";
 import { uk } from 'date-fns/locale/uk'; // Corrected import
 import "react-datepicker/dist/react-datepicker.css";
@@ -82,6 +81,7 @@ export default function HomePage() {
   const router = useRouter();
   const pollerCleanupRef = useRef<(() => void) | null>(null);
   const mapSelectorRef = useRef<MapSelectorRef | null>(null); // Create ref for MapSelector
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // --- State Hooks --- //
   const [selectedArea, setSelectedArea] = useState<Feature<Polygon | Point> | null>(null);
@@ -114,8 +114,11 @@ export default function HomePage() {
      setJobId(null);
      setJobProgress(null);
      setError(null);
-     pollerCleanupRef.current?.();
-     pollerCleanupRef.current = null;
+     // Clear polling interval
+     if (progressIntervalRef.current) {
+         clearInterval(progressIntervalRef.current);
+         progressIntervalRef.current = null;
+     }
      // --- Call clearLayers on MapSelector --- //
      console.log('[HomePage] Скидання стану, очищення шарів мапи.');
      mapSelectorRef.current?.clearLayers();
@@ -149,11 +152,13 @@ export default function HomePage() {
 
   // Cleanup SSE connection ONLY on component unmount
   useEffect(() => {
-    // Store the ref value in a variable inside the effect scope
-    const cleanupFunc = pollerCleanupRef.current;
+    // Clear polling interval on component unmount
+    const intervalId = progressIntervalRef.current; // Capture ref value
     return () => {
-      console.log('[HomePage Cleanup] Компонент демонтується, очищення поллера.');
-      cleanupFunc?.(); // Use the captured value
+       console.log('[HomePage Cleanup] Компонент демонтується, очищення інтервалу опитування.');
+       if (intervalId) {
+           clearInterval(intervalId);
+       }
     };
   }, []); // <-- Empty dependency array
 
@@ -163,14 +168,16 @@ export default function HomePage() {
       return;
     }
     setError(null);
-    // setJobId(null); // Not strictly necessary if we clean up below
+    setJobId(null); // Reset previous job ID
     setJobProgress({ progress: 0, statusMessage: 'Запуск аналізу...', isComplete: false });
     setAnalysisStatus('starting');
 
-    // --- Clean up any PREVIOUS SSE connection --- //
-    console.log('[HomePage] Очищення попереднього поллера (якщо є).');
-    pollerCleanupRef.current?.(); // Call cleanup from the ref
-    pollerCleanupRef.current = null; // Clear the ref
+    // --- Clean up any PREVIOUS polling interval --- //
+    console.log('[HomePage] Очищення попереднього інтервалу опитування (якщо є).');
+    if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+    }
     // ------------------------------------------ //
 
     try {
@@ -185,38 +192,53 @@ export default function HomePage() {
       // Status will be set by the first onProgress event
 
       // --- Start NEW Polling --- //
-      console.log('[HomePage] Запуск нового поллера.');
-      pollerCleanupRef.current = subscribeToJobProgress(response.jobId, {
-          onProgress: (progressData) => {
-              console.log('[HomePage] Отримано прогрес:', progressData); 
-              setJobProgress(progressData); 
-              
-              setAnalysisStatus(currentStatus => {
-                  if (currentStatus !== 'processing' && currentStatus !== 'error' && currentStatus !== 'success' && !progressData.isComplete) {
-                      console.log('[HomePage] Встановлення статусу processing');
-                      return 'processing';
-                  }
-                  return currentStatus; 
-              });
-          },
-          onComplete: (finalData) => {
-              console.log('[HomePage] Опитування завершено:', finalData); 
-              setJobProgress(finalData);
-              setAnalysisStatus('success');
-              pollerCleanupRef.current = null; // Clear ref on completion
-          },
-          onError: (err) => {
-              console.error('[HomePage] Помилка опитування:', err);
-              setError(err.message || 'Помилка отримання прогресу.');
-              setAnalysisStatus('error');
-              setJobProgress((prev: JobProgress | null) => ({ 
-                  ...(prev ?? { progress: 0, isComplete: false }), 
-                  statusMessage: 'Помилка опитування', 
-                  error: err.message 
-              }));
-              pollerCleanupRef.current = null; // Clear ref on error
+      const currentJobId = response.jobId; // Capture jobId for the interval closure
+      setAnalysisStatus('processing'); // Set status to processing immediately
+      console.log(`[HomePage] Запуск інтервалу опитування для ${currentJobId}.`);
+
+      const pollProgress = async () => {
+        console.log(`[Polling ${currentJobId}] Fetching progress...`);
+        try {
+          const res = await fetch(`/api/progress/${currentJobId}`);
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(errorData.detail || `HTTP error! status: ${res.status}`);
           }
-      });
+          const progressData: JobProgress = await res.json();
+          console.log(`[Polling ${currentJobId}] Progress data:`, progressData);
+          setJobProgress(progressData);
+
+          if (progressData.isComplete) {
+            console.log(`[Polling ${currentJobId}] Job complete. Stopping interval.`);
+            if (progressIntervalRef.current) {
+              clearInterval(progressIntervalRef.current);
+              progressIntervalRef.current = null;
+            }
+            setAnalysisStatus(progressData.error ? 'error' : 'success');
+            if (progressData.error) {
+                setError(progressData.error);
+            }
+          } else if (analysisStatus !== 'processing') {
+              // Ensure status is processing if not complete
+              setAnalysisStatus('processing');
+          }
+
+        } catch (err) {
+          console.error(`[Polling ${currentJobId}] Помилка під час опитування прогресу:`, err);
+          setError(err instanceof Error ? err.message : 'Помилка отримання прогресу.');
+          setAnalysisStatus('error');
+          if (progressIntervalRef.current) {
+            clearInterval(progressIntervalRef.current);
+            progressIntervalRef.current = null;
+          }
+        }
+      };
+
+      // Initial fetch immediately
+      pollProgress();
+      // Set interval for subsequent fetches
+      progressIntervalRef.current = setInterval(pollProgress, 5000); // Poll every 5 seconds
+
       // ------------------------ //
 
     } catch (err) {
@@ -226,7 +248,10 @@ export default function HomePage() {
       setAnalysisStatus('error');
       setJobProgress(null);
       // Ensure cleanup ref is cleared on API error too
-      pollerCleanupRef.current = null;
+      if (progressIntervalRef.current) {
+         clearInterval(progressIntervalRef.current);
+         progressIntervalRef.current = null;
+      }
     }
   };
 

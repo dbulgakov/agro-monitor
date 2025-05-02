@@ -38,19 +38,27 @@ export interface StartAnalysisResponse {
 export interface ReportData {
   jobId: string;
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  parameters: AnalysisParameters;
-  selectedArea: Feature<Polygon | Point>;
+  requestPayload?: StartAnalysisPayload;
+  reportTimestamp?: string;
+  ndviStatistics?: {
+    mean?: number | null;
+    min?: number | null;
+    max?: number | null;
+    std_dev?: number | null;
+    stress_percentage?: number | null;
+  };
+  mapUrls?: {
+    ndvi?: string | null;
+    rgb?: string | null;
+    stress?: string | null;
+  };
+  recommendations?: string | null;
+  errorMessage?: string | null;
+  selectedArea?: Feature<Polygon | Point>;
+  areaSqKm?: number | null;
   mapCenter?: [number, number];
   mapZoom?: number;
-  resultGeoJson?: FeatureCollection<Polygon | Point, { health: string }>;
-  satelliteImages?: { url: string; date: string; cloudCover: number }[];
-  summary: string;
-  error?: string;
-  areaSqKm?: number;
-  snapshotImageUrl?: string;
-  ndviImageUrl?: string;
-  stressZoneImageUrl?: string;
-  stressPercentage?: number;
+  imageBounds?: [[number, number], [number, number]] | null;
 }
 
 export interface JobProgress {

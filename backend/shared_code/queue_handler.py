@@ -2,7 +2,7 @@ import logging
 import json
 from io import BytesIO
 from datetime import datetime, timezone
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -15,6 +15,7 @@ from rasterio.warp import transform_geom
 from azure.storage.blob import ContentSettings
 from shapely.geometry import shape as shapely_shape
 from pyproj import Geod
+import rasterio.warp # Import warp for transform
 
 from shared_code.helpers.blob import get_sync_blob_service_client, IMAGES_CONTAINER_NAME, REPORTS_CONTAINER_NAME
 from shared_code.helpers.job_status import update_job_status, get_job_status
@@ -71,6 +72,32 @@ def render_rgb_png(rgb: np.ndarray, downsample: int = 1) -> BytesIO:
     return buf
 
 
+def render_stress_zone_png(stress_mask: np.ndarray, downsample: int = 1) -> BytesIO:
+    """Render a boolean stress mask as a black (no stress) and white (stress) PNG."""
+    if stress_mask.size == 0:
+        # Return empty buffer if input is empty
+        logging.warning("Empty stress mask; cannot render PNG.")
+        return BytesIO()
+        
+    # Convert boolean mask to uint8 (True=255, False=0)
+    img_array = (stress_mask * 255).astype(np.uint8)
+    image = Image.fromarray(img_array, mode="L")
+    
+    if downsample > 1:
+        w, h = image.size
+        if w > 0 and h > 0: # Ensure image is not empty before resizing
+            image = image.resize((w // downsample, h // downsample), Image.Resampling.NEAREST)
+        else:
+            logging.warning("Cannot downsample empty stress mask image.")
+            # Return empty buffer if resize results in zero dimensions
+            return BytesIO()
+            
+    buf = BytesIO()
+    image.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
+
 def upload_png_buffer(client, job_id: str, buf: BytesIO, name: str) -> Optional[str]:
     blob = client.get_blob_client(container=IMAGES_CONTAINER_NAME, blob=f"{job_id}/{name}")
     blob.upload_blob(
@@ -82,12 +109,15 @@ def upload_png_buffer(client, job_id: str, buf: BytesIO, name: str) -> Optional[
     return blob.url
 
 
-def read_band_windowed(href: str, bounds_geojson: dict, band_index: int = 1) -> np.ndarray:
+def read_band_windowed(href: str, bounds_geojson: dict, band_index: int = 1) -> Tuple[np.ndarray, rasterio.Affine, rasterio.crs.CRS]:
     """Read a raster band intersecting the given AOI.
 
     1.  Reprojects the AOI (assumed to be EPSG:4326) into the raster CRS.
     2.  Uses ``rasterio.mask.mask`` to pull only the pixels that fall inside the AOI.
     3.  Performs a few sanity-checks to be sure we did not get an empty or all-nodata array.
+
+    Returns:
+        Tuple[np.ndarray, rasterio.Affine, rasterio.crs.CRS]: The masked data array, its affine transform, and its CRS.
     """
 
     # Fast-fail on obviously wrong input
@@ -115,7 +145,7 @@ def read_band_windowed(href: str, bounds_geojson: dict, band_index: int = 1) -> 
 
             # ``mask`` returns an array in shape (bands, rows, cols)
             try:
-                out_image, _ = mask(src, [geom_proj], crop=True, indexes=band_index, filled=True)
+                out_image, out_transform = mask(src, [geom_proj], crop=True, indexes=band_index, filled=True)
             except ValueError as e:
                 # Raised when shapes do not overlap raster
                 raise RuntimeError(f"AOI does not intersect raster: {e}")
@@ -129,16 +159,20 @@ def read_band_windowed(href: str, bounds_geojson: dict, band_index: int = 1) -> 
             if src.nodata is not None and np.all(data == src.nodata):
                 raise RuntimeError("Masked read is entirely nodata")
 
-            return data
+            return data, out_transform, src.crs
 
 
-def read_and_downsample(href: str, bounds_geojson: dict, downsample: int) -> np.ndarray:
+def read_and_downsample(href: str, bounds_geojson: dict, downsample: int) -> Tuple[np.ndarray, Optional[rasterio.Affine], Optional[rasterio.crs.CRS]]:
     """
     Reads the specified band, applies windowed read, downsamples if requested,
     and falls back to a synthetic 1x1 zero array on any error to allow analysis to proceed.
+
+    Returns:
+        Tuple[np.ndarray, Optional[rasterio.Affine], Optional[rasterio.crs.CRS]]: 
+            The data array, its transform (or None on error), and its CRS (or None on error).
     """
     try:
-        arr = read_band_windowed(href, bounds_geojson)
+        arr, transform, crs = read_band_windowed(href, bounds_geojson)
 
         # Perform downsampling if required
         if downsample > 1 and arr.size > 0:
@@ -154,10 +188,10 @@ def read_and_downsample(href: str, bounds_geojson: dict, downsample: int) -> np.
         # Validate non-empty result
         if arr.size == 0:
             raise RuntimeError("No valid data after read and downsampling")
-        return arr
+        return arr, transform, crs
     except Exception as e:
         logging.warning(f"Failed to read/downsample band {href}: {e}. Using zeros array.")
-        return np.zeros((1, 1), dtype=np.float32)
+        return np.zeros((1, 1), dtype=np.float32), None, None
 
 
 def validate_message(msg: func.QueueMessage) -> Optional[Dict]:
@@ -172,26 +206,33 @@ def validate_message(msg: func.QueueMessage) -> Optional[Dict]:
         return None
 
 
-def fetch_band_urls(client, job_id: str, payload: StartAnalysisPayload) -> Dict[str, str]:
+def fetch_band_urls(client, job_id: str, payload: StartAnalysisPayload) -> Dict[str, Optional[str]]:
     update_job_status(client, job_id, JobStatus.PROCESSING, 15, "Fetching URLs")
     from pystac_client import Client
     from planetary_computer import sign
 
     catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
     start, end = payload.date_range.split("/")
-    items = (
-        catalog.search(
-            collections=["sentinel-2-l2a"],
-            intersects=payload.area.geometry.model_dump(),
-            datetime=f"{start}/{end}",
-            query={"eo:cloud_cover": {"lt": getattr(payload, "max_cloud_cover", 50)}},
-            max_items=1,
-        )
-        .item_collection()
+    
+    # Fetch multiple items (e.g., 5) and sort by cloud cover
+    MAX_ITEMS_TO_FETCH = 5
+    search = catalog.search(
+        collections=["sentinel-2-l2a"],
+        intersects=payload.area.geometry.model_dump(),
+        datetime=f"{start}/{end}",
+        query={"eo:cloud_cover": {"lt": getattr(payload, "max_cloud_cover", 50)}},
+        sortby=[{"field": "properties.eo:cloud_cover", "direction": "asc"}], # Sort by cloud cover ascending
+        max_items=MAX_ITEMS_TO_FETCH,
     )
+    items = search.item_collection()
+
     if not items:
-        raise RuntimeError("No matching Sentinel-2 items found.")
+        raise RuntimeError(f"No matching Sentinel-2 items found within {MAX_ITEMS_TO_FETCH} items and cloud cover < {getattr(payload, 'max_cloud_cover', 50)}%")
+
+    # Select the best item (first one, since sorted by cloud cover)
+    logging.info(f"Found {len(items)} items. Selecting best (lowest cloud cover): {items[0].id}")
     item = sign(items[0])
+
     # Prefer lower-resolution (20 m) assets to reduce data volume. Fall back to 10 m/full-res.
     candidate_keys = {
         "nir": ["B08_20m", "B08_10m", "B08"],
@@ -215,7 +256,7 @@ def fetch_band_urls(client, job_id: str, payload: StartAnalysisPayload) -> Dict[
             visual_href = item.assets[opt].href
             break
 
-    selected["visual"] = visual_href
+    selected["visual"] = visual_href # Can be None if not found
     return selected
 
 
@@ -224,6 +265,28 @@ def compute_ndvi(nir: np.ndarray, red: np.ndarray) -> np.ndarray:
         d = nir + red
         ndvi = np.where(d != 0, (nir - red) / d, 0)
     return ndvi.astype(np.float32)
+
+
+def get_bounds_from_transform(shape: tuple, transform: rasterio.Affine, src_crs: rasterio.crs.CRS) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """Calculate image bounds in EPSG:4326 from shape, transform, and CRS."""
+    try:
+        height, width = shape
+        # Get corners in source CRS
+        corners = [(0, 0), (0, width), (height, width), (height, 0)]
+        xs, ys = rasterio.transform.xy(transform, [p[0] for p in corners], [p[1] for p in corners])
+        
+        # Transform corners to WGS84
+        lons, lats = rasterio.warp.transform(src_crs, 'EPSG:4326', xs, ys)
+        
+        # Calculate min/max lat/lon
+        min_lon, max_lon = min(lons), max(lons)
+        min_lat, max_lat = min(lats), max(lats)
+        
+        # Return ((min_lat, min_lon), (max_lat, max_lon))
+        return ((min_lat, min_lon), (max_lat, max_lon))
+    except Exception as e:
+        logging.warning(f"Could not calculate bounds from transform: {e}")
+        return None
 
 
 def process_analysis(msg: func.QueueMessage):
@@ -253,67 +316,87 @@ def process_analysis(msg: func.QueueMessage):
         update_job_status(client, job_id, JobStatus.PROCESSING, 20, "Band URLs fetched")
         
         # 2) Read + downsample
-        bounds = payload.area.geometry.model_dump()
+        bounds_geojson = payload.area.geometry.model_dump()
+        # Use a consistent downsample factor
+        DOWNSAMPLE_FACTOR = 4 
         update_job_status(client, job_id, JobStatus.PROCESSING, 30, "Reading NIR band")
-        nir = read_and_downsample(urls["nir"], bounds, downsample=4)
+        nir, nir_transform, nir_crs = read_and_downsample(urls["nir"], bounds_geojson, downsample=DOWNSAMPLE_FACTOR)
         update_job_status(client, job_id, JobStatus.PROCESSING, 40, "Reading RED band")
-        red = read_and_downsample(urls["red"], bounds, downsample=4)
+        red, _, _ = read_and_downsample(urls["red"], bounds_geojson, downsample=DOWNSAMPLE_FACTOR)
         
         update_job_status(client, job_id, JobStatus.PROCESSING, 50, "Calculating NDVI")
         ndvi = compute_ndvi(nir, red)
         update_job_status(client, job_id, JobStatus.PROCESSING, 55, "NDVI calculated")
 
+        # Calculate image bounds based on the read NIR band (assuming others align)
+        image_bounds_wgs84 = None
+        if nir.shape != (1, 1) and nir_transform and nir_crs: # Check if read was successful
+            image_bounds_wgs84 = get_bounds_from_transform(nir.shape, nir_transform, nir_crs)
+
         rgb_arr = None
         rgb_url = None
         if urls.get("visual"):
             update_job_status(client, job_id, JobStatus.PROCESSING, 60, "Reading VISUAL band")
-            rgb_arr = read_and_downsample(urls["visual"], bounds, downsample=4)
+            rgb_arr, _, _ = read_and_downsample(urls["visual"], bounds_geojson, downsample=DOWNSAMPLE_FACTOR)
             update_job_status(client, job_id, JobStatus.PROCESSING, 65, "Visual band read")
+            # Only generate RGB URL if read was likely successful (not just zeros)
+            if rgb_arr.shape != (1, 1): 
+                update_job_status(client, job_id, JobStatus.PROCESSING, 80, "Rendering and uploading RGB map")
+                rgb_buf = render_rgb_png(rgb_arr, downsample=1) # No extra downsample here if already done
+                rgb_url = upload_png_buffer(client, job_id, rgb_buf, "rgb_map.png")
+                update_job_status(client, job_id, JobStatus.PROCESSING, 85, "RGB map uploaded")
+            else:
+                 logging.warning("Skipping RGB map upload due to failed read (zeros array).")
 
-        # 3) Render + upload
+        # 3) Render + upload NDVI map (always attempt)
         update_job_status(client, job_id, JobStatus.PROCESSING, 70, "Rendering and uploading NDVI map")
-        ndvi_buf = render_ndvi_png(ndvi)
+        ndvi_buf = render_ndvi_png(ndvi, downsample=1) # No extra downsample here
         ndvi_url = upload_png_buffer(client, job_id, ndvi_buf, "ndvi_map.png")
         update_job_status(client, job_id, JobStatus.PROCESSING, 75, "NDVI map uploaded")
         
-        if rgb_arr is not None:
-            update_job_status(client, job_id, JobStatus.PROCESSING, 80, "Rendering and uploading RGB map")
-            rgb_buf = render_rgb_png(rgb_arr)
-            rgb_url = upload_png_buffer(client, job_id, rgb_buf, "rgb_map.png")
-            update_job_status(client, job_id, JobStatus.PROCESSING, 85, "RGB map uploaded")
-
-        # 4) Recommendations
-        update_job_status(client, job_id, JobStatus.PROCESSING, 90, "Generating recommendations")
+        # Calculate the definitive stress mask for statistics AND image generation
         thresh = getattr(payload, "ndvi_threshold", 0.3)
         mask = np.isfinite(ndvi)
+        stress_mask_bool = (ndvi < thresh) & mask
+        
+        # Render and upload stress zone map
+        stress_zone_url = None
+        update_job_status(client, job_id, JobStatus.PROCESSING, 86, "Rendering and uploading Stress Zone map")
+        try:
+            stress_buf = render_stress_zone_png(stress_mask_bool, downsample=1)
+            if stress_buf.getbuffer().nbytes > 0: # Check if buffer is not empty
+                 stress_zone_url = upload_png_buffer(client, job_id, stress_buf, "stress_zone_map.png")
+                 update_job_status(client, job_id, JobStatus.PROCESSING, 88, "Stress Zone map uploaded")
+            else:
+                 logging.warning("Skipping stress zone map upload due to empty buffer.")
+        except Exception as img_e:
+            logging.warning(f"Failed to render/upload stress zone map: {img_e}")
+            
+        # 4) Recommendations
+        update_job_status(client, job_id, JobStatus.PROCESSING, 90, "Generating recommendations")
         if ndvi.size <= 1:
             recs = "Недостатньо даних для аналізу NDVI на заданій ділянці."
-            # No stress calculation needed specifically for recommendations here
         else:
-            # Calculate stress specifically for OpenAI input
-            stress_for_recs = (ndvi < thresh) & mask
+            # Use the already calculated stress_mask_bool
             try:
-                recs = generate_openai_recommendations(job_id, ndvi, stress_for_recs, payload.crop_type)
+                recs = generate_openai_recommendations(job_id, ndvi, stress_mask_bool, payload.crop_type)
             except Exception as e:
                 logging.warning(f"Failed to generate AI recommendations: {e}")
                 recs = "Не вдалося згенерувати рекомендації через помилку."
         
-        # Calculate the definitive stress mask for statistics, regardless of ndvi size
-        stress = (ndvi < thresh) & mask
-        
         update_job_status(client, job_id, JobStatus.PROCESSING, 95, "Recommendations generated")
 
         # 5) Stats
-        valid = ndvi[mask]
-        if valid.size > 0:
-            num_valid = valid.size
-            num_stressed = stress.sum()
+        valid_ndvi = ndvi[mask]
+        if valid_ndvi.size > 0:
+            num_valid = valid_ndvi.size
+            num_stressed = stress_mask_bool.sum() # Sum the boolean mask
             stats = {
-                "mean": float(valid.mean()),
-                "min": float(valid.min()),
-                "max": float(valid.max()),
-                "std_dev": float(valid.std()),
-                "stress_percentage": float(num_stressed / num_valid * 100),
+                "mean": float(valid_ndvi.mean()),
+                "min": float(valid_ndvi.min()),
+                "max": float(valid_ndvi.max()),
+                "std_dev": float(valid_ndvi.std()),
+                "stress_percentage": float(num_stressed / num_valid * 100) if num_valid > 0 else 0.0,
             }
         else:
             stats = {"mean": None, "min": None, "max": None, "std_dev": None, "stress_percentage": 0.0}
@@ -340,20 +423,14 @@ def process_analysis(msg: func.QueueMessage):
             status=JobStatus.COMPLETED,
             requestPayload=payload.model_dump(exclude_none=True),
             reportTimestamp=datetime.now(timezone.utc).isoformat(),
-            ndviStatistics=stats,
-            mapUrls={"ndvi": ndvi_url, "rgb": rgb_url},
+            ndviStatistics=stats, # Contains stress_percentage
+            mapUrls={"ndvi": ndvi_url, "rgb": rgb_url, "stress": stress_zone_url}, # Added stress URL
             recommendations=recs,
-            # New fields for frontend compatibility
-            parameters=payload.model_dump(exclude_none=True),
             selectedArea=payload.area.model_dump(exclude_none=True),
             areaSqKm=area_sq_km,
-            snapshotImageUrl=rgb_url,
-            ndviImageUrl=ndvi_url,
-            stressZoneImageUrl=None,  # Placeholder; could generate mask image
-            stressPercentage=stats.get("stress_percentage"),
-            summary=recs,
             mapCenter=map_center,
-            mapZoom=13,
+            mapZoom=13, # Keep default or calculate dynamically?
+            imageBounds=image_bounds_wgs84 # Add calculated bounds
         )
         report_blob = client.get_blob_client(
             container=REPORTS_CONTAINER_NAME, blob=f"{job_id}/report.json"
@@ -374,11 +451,10 @@ def process_analysis(msg: func.QueueMessage):
             failure_report = ReportData(
                 jobId=job_id,
                 status=JobStatus.FAILED,
-                requestPayload=request_payload_dict,
+                requestPayload=request_payload_dict, # Use original payload if possible
                 reportTimestamp=datetime.now(timezone.utc).isoformat(),
-                ndviStatistics={},
-                mapUrls={}, 
-                recommendations=f"Analysis failed: {error_message}",
+                errorMessage=error_message # Store the error message here
+                # Other fields default to None
             )
             report_blob = client.get_blob_client(
                 container=REPORTS_CONTAINER_NAME, blob=f"{job_id}/report.json"
