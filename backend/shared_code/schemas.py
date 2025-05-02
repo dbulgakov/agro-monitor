@@ -99,6 +99,16 @@ class ReportData(BaseModel):
     mapUrls: Optional[Dict[str, Optional[str]]] = None
     recommendations: Optional[str] = None
     errorMessage: Optional[str] = None
+    selectedArea: Optional[Dict[str, Any]] = None
+    parameters: Optional[Dict[str, Any]] = None
+    areaSqKm: Optional[float] = None
+    snapshotImageUrl: Optional[str] = None
+    ndviImageUrl: Optional[str] = None
+    stressZoneImageUrl: Optional[str] = None
+    stressPercentage: Optional[float] = None
+    summary: Optional[str] = None
+    mapCenter: Optional[List[float]] = None
+    mapZoom: Optional[int] = None
 
 class ErrorResponse(BaseModel):
     message: str

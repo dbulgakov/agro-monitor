@@ -12,6 +12,8 @@ import rasterio
 from rasterio.windows import from_bounds
 from rasterio.env import Env
 from azure.storage.blob import ContentSettings
+from shapely.geometry import shape as shapely_shape
+from pyproj import Geod
 
 from shared_code.helpers.blob import get_sync_blob_service_client, IMAGES_CONTAINER_NAME, REPORTS_CONTAINER_NAME
 from shared_code.helpers.job_status import update_job_status, get_job_status
@@ -287,15 +289,42 @@ def process_analysis(msg: func.QueueMessage):
         else:
             stats = {"mean": None, "min": None, "max": None, "std_dev": None, "stress_percentage": 0.0}
         
-        # 6) Save report
+        # NEW: compute area (km^2) and centroid for map center
+        area_sq_km = None
+        map_center = None
+        try:
+            geom_dict = payload.area.geometry.model_dump()
+            geom = shapely_shape(geom_dict)
+            if geom.is_valid and not geom.is_empty and geom.geom_type == "Polygon":
+                geod = Geod(ellps="WGS84")
+                # pyproj returns negative area depending on winding order
+                area, _ = geod.geometry_area_perimeter(geom)
+                area_sq_km = abs(area) / 1_000_000  # m^2 to km^2
+                lon, lat = geom.centroid.x, geom.centroid.y
+                map_center = [lat, lon]
+        except Exception as e:
+            logging.warning(f"Could not compute area/centroid: {e}")
+        
+        # 6) Save report (updated)
         report = ReportData(
             jobId=job_id,
             status=JobStatus.COMPLETED,
             requestPayload=payload.model_dump(exclude_none=True),
             reportTimestamp=datetime.now(timezone.utc).isoformat(),
             ndviStatistics=stats,
-            mapUrls={"ndvi": ndvi_url, "rgb": rgb_url}, # Updated to include potential None for rgb_url
+            mapUrls={"ndvi": ndvi_url, "rgb": rgb_url},
             recommendations=recs,
+            # New fields for frontend compatibility
+            parameters=payload.model_dump(exclude_none=True),
+            selectedArea=payload.area.model_dump(exclude_none=True),
+            areaSqKm=area_sq_km,
+            snapshotImageUrl=rgb_url,
+            ndviImageUrl=ndvi_url,
+            stressZoneImageUrl=None,  # Placeholder; could generate mask image
+            stressPercentage=stats.get("stress_percentage"),
+            summary=recs,
+            mapCenter=map_center,
+            mapZoom=13,
         )
         report_blob = client.get_blob_client(
             container=REPORTS_CONTAINER_NAME, blob=f"{job_id}/report.json"
