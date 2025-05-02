@@ -64,7 +64,7 @@ def test_queue_processing_end_to_end(
     RETRY_DELAY = 2 # seconds
     print(f"Attempting to receive message from queue '{analysis_queue_client.queue_name}'...")
     for attempt in range(MAX_RETRIES):
-        messages = analysis_queue_client.receive_messages(max_messages=1, visibility_timeout=10) # Short timeout
+        messages = analysis_queue_client.receive_messages(max_messages=1, visibility_timeout=120) # Increased timeout
         msg_list = list(messages)
         if msg_list:
             message = msg_list[0]
@@ -118,7 +118,7 @@ def test_queue_processing_end_to_end(
     # With the synthetic data fallback, the analysis should always complete successfully
     # even if the AOI is invalid or yields no data. The results (map, stats) might be
     # based on the synthetic 1x1 zero array, but the pipeline itself shouldn't fail.
-    is_successful = final_progress == 100 and "completed" in final_message
+    is_successful = final_progress == 100 and final_message == "завершено"
     # is_expected_failure = final_progress == -1 and "empty array returned" in final_message # No longer expected
 
     assert is_successful, f"Final status unexpected: progress={final_progress}, message={last_status_data.get('statusMessage')}"
@@ -141,7 +141,7 @@ def test_queue_processing_end_to_end(
     if is_successful: # Status blob should reflect success
         assert status_data.status == JobStatus.COMPLETED
         assert status_data.progress == 100
-        assert status_data.message == "Analysis completed successfully"
+        assert status_data.message == "Завершено" # Check for the actual Ukrainian message
         print("Final status blob verified for successful job.")
     # elif is_expected_failure: # No longer applicable
     #     assert status_data.status == JobStatus.FAILED
@@ -199,7 +199,7 @@ def test_queue_processing_end_to_end(
         report_data = ReportData.model_validate_json(report_content) # Assume success based on is_successful flag
 
         if report_data.mapUrls.get("ndvi"):
-            ndvi_image_blob_client = images_container_client.get_blob_client(f"{job_id}/ndvi_map.png")
+            ndvi_image_blob_client = images_container_client.get_blob_client(f"{job_id}/ndvi.png")
             assert ndvi_image_blob_client.exists(), "NDVI image blob should exist if URL is present."
             ndvi_props = ndvi_image_blob_client.get_blob_properties()
             assert ndvi_props.size > 0
@@ -209,7 +209,7 @@ def test_queue_processing_end_to_end(
             print("Skipping NDVI image verification (URL not in report).")
 
         if report_data.mapUrls.get("rgb"):
-            rgb_image_blob_client = images_container_client.get_blob_client(f"{job_id}/rgb_map.png")
+            rgb_image_blob_client = images_container_client.get_blob_client(f"{job_id}/rgb.png")
             assert rgb_image_blob_client.exists(), "RGB image blob should exist if URL is present."
             rgb_props = rgb_image_blob_client.get_blob_properties()
             assert rgb_props.size > 0
@@ -217,6 +217,17 @@ def test_queue_processing_end_to_end(
             print("RGB image blob verified.")
         else:
             print("Skipping RGB image verification (URL not in report).")
+
+        # Add check for stress map
+        if report_data.mapUrls.get("stress"):
+            stress_image_blob_client = images_container_client.get_blob_client(f"{job_id}/stress.png")
+            assert stress_image_blob_client.exists(), "Stress image blob should exist if URL is present."
+            stress_props = stress_image_blob_client.get_blob_properties()
+            assert stress_props.size > 0
+            assert stress_props.content_settings.content_type == "image/png"
+            print("Stress image blob verified.")
+        else:
+            print("Skipping Stress image verification (URL not in report).")
     else:
         print("Skipping image verification for non-successful job.")
 

@@ -19,7 +19,7 @@ def get_job_status(client: BlobServiceClient, job_id: str) -> Optional[ProgressU
         log_adapter.error(f"Failed to get job status: {e}", exc_info=True)
     return None
 
-def update_job_status(client: BlobServiceClient, job_id: str, status: JobStatus, progress: int, message: str = None):
+def update_job_status(client: BlobServiceClient, job_id: str, status: JobStatus, progress: int, message: Optional[str] = None, raw: Optional[str] = None):
     log_adapter = logging.getLogger(__name__).getChild(job_id)
     try:
         blob_client = client.get_blob_client(container=REPORTS_CONTAINER_NAME, blob=f"{job_id}/status.json")
