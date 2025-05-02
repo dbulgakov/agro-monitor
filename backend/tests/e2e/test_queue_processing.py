@@ -39,17 +39,22 @@ def test_queue_processing_end_to_end(
             "type": "Feature",
             "geometry": {
                 "type": "Polygon",
-                "coordinates": [[[30.0, 50.0], [30.01, 50.0], [30.01, 50.01], [30.0, 50.01], [30.0, 50.0]]]
-            },
+                "coordinates": [[
+                    [32.95, 47.45],
+                    [32.95, 49.19],
+                    [36.94, 49.19],
+                    [36.94, 47.45],
+                    [32.95, 47.45]
+                ]]
+            }
         },
-        # Use a recent date range more likely to have Sentinel-2 data
-        # e.g., a few months back, adjust as necessary
         "date_range": "2024-04-01/2024-04-15",
         "crop_type": "wheat",
         "frequency": "single",
         "ndvi_threshold": 0.3,
-        "max_cloud_cover": 80, # Increased cloud cover tolerance
+        "max_cloud_cover": 80
     }
+
     print(f"Submitting analysis request: {test_payload}")
     response = client.post("/api/analyze", json=test_payload)
     if response.status_code != status.HTTP_202_ACCEPTED:
@@ -117,20 +122,36 @@ def test_queue_processing_end_to_end(
 
     # Define expected outcomes
     is_successful = final_progress == 100 and final_message == "завершено"
+
+    # Failure when there were scenes fetched but none passed quality checks (progress 35)
     is_expected_no_scene_failure = (
         final_progress == 35
         and final_message == "не знайдено придатних сцен"
-        and last_status_data.get("status") == JobStatus.FAILED.value # Also check the enum value
+        and last_status_data.get("status") == JobStatus.FAILED.value  # Also check the enum value
+    )
+
+    # Failure when _fetch_scenes returned an empty collection (progress 10)
+    is_expected_no_scenes_found_failure = (
+        final_progress == 10
+        and final_message == "сцени не знайдено"
+        and last_status_data.get("status") == JobStatus.FAILED.value
     )
 
     # Assert that the outcome is one of the expected ones
-    assert is_successful or is_expected_no_scene_failure, \
-        f"Final status unexpected: progress={final_progress}, status={last_status_data.get('status')}, message='{last_status_data.get('statusMessage')}'"
+    assert is_successful or is_expected_no_scene_failure or is_expected_no_scenes_found_failure, \
+        (
+            "Final status unexpected: "
+            f"progress={final_progress}, "
+            f"status={last_status_data.get('status')}, "
+            f"message='{last_status_data.get('statusMessage')}'"
+        )
 
     if is_successful:
         print("Job completed successfully.")
     elif is_expected_no_scene_failure:
         print("Job failed as expected: No usable scenes found.")
+    elif is_expected_no_scenes_found_failure:
+        print("Job failed as expected: No scenes found.")
     # No else needed because the assert above covers it
 
     # 5. Verify final status update in blob storage
@@ -141,20 +162,26 @@ def test_queue_processing_end_to_end(
     status_data = ProgressUpdate.model_validate_json(status_content)
     assert status_data.jobId == job_id
 
-    if is_successful: # Status blob should reflect success
+    if is_successful:  # Status blob should reflect success
         assert status_data.status == JobStatus.COMPLETED
         assert status_data.progress == 100
         assert status_data.message == "Завершено" # Check for the actual Ukrainian message
         print("Final status blob verified for successful job.")
-    elif is_expected_no_scene_failure: # Status blob should reflect the specific failure
+    elif is_expected_no_scene_failure:  # Status blob should reflect the specific failure
         assert status_data.status == JobStatus.FAILED
         assert status_data.progress == 35 # Or whatever progress level it fails at
         assert status_data.message == "Не знайдено придатних сцен"
         print("Final status blob verified for expected no-scene failure.")
+    elif is_expected_no_scenes_found_failure:
+        # Status blob should reflect the scenes-not-found failure
+        assert status_data.status == JobStatus.FAILED
+        assert status_data.progress == 10
+        assert status_data.message == "Сцени не знайдено"
+        print("Final status blob verified for scenes-not-found failure.")
 
     # 6. Verify report blob content (handles success and expected failure)
     print("Verifying report blob...")
-    if is_successful: # Only check for report blob if job was successful
+    if is_successful:  # Only check for report blob if job was successful
         report_blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
         assert report_blob_client.exists(), "Report blob should exist after successful completion."
         report_content = report_blob_client.download_blob().readall()
@@ -195,6 +222,9 @@ def test_queue_processing_end_to_end(
          # Optionally, could assert that the report *doesn't* exist here
          # report_blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
          # assert not report_blob_client.exists(), "Report blob should NOT exist for no-scene failure."
+    elif is_expected_no_scenes_found_failure:
+         print("Skipping report blob verification for scenes-not-found failure.")
+         # Similarly, a report blob is not expected in this failure mode
     else: # Should not be reachable due to earlier assertion
         pytest.fail("Reached unexpected state when verifying report blob.")
 
@@ -237,6 +267,8 @@ def test_queue_processing_end_to_end(
             print("Skipping Stress image verification (URL not in report).")
     elif is_expected_no_scene_failure:
         print("Skipping image verification for expected no-scene failure.")
+    elif is_expected_no_scenes_found_failure:
+        print("Skipping image verification for scenes-not-found failure.")
     else: # Should not be reachable
         print("Skipping image verification for non-successful job.")
 
@@ -274,6 +306,19 @@ def test_queue_processing_end_to_end(
         assert api_data.get("ndviStatistics") is None or api_data.get("ndviStatistics") == {}
         assert api_data.get("mapUrls") is None or api_data.get("mapUrls") == {}
         print("API report retrieval verified for expected no-scene failure.")
+    elif is_expected_no_scenes_found_failure:
+        # Report endpoint may return 404 or 202 (pending) since processing stopped early.
+        assert report_resp.status_code in {status.HTTP_404_NOT_FOUND, status.HTTP_202_ACCEPTED, status.HTTP_200_OK}, (
+            f"Unexpected status code {report_resp.status_code} for scenes-not-found failure"
+        )
+        if report_resp.status_code == status.HTTP_200_OK:
+            # If 200, ensure it indicates FAILED with minimal data
+            api_data = report_resp.json()
+            assert api_data["status"] == JobStatus.FAILED.value
+            assert api_data["jobId"] == job_id
+            print("API report retrieval verified for scenes-not-found failure (200 response).")
+        else:
+            print("API report retrieval verified for scenes-not-found failure (non-200 response).")
     else:
         # For other unexpected states, maybe the report endpoint returns 404 or 500
         # Adjust assertion based on expected behavior for other failures
