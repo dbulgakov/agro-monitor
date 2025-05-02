@@ -115,22 +115,25 @@ def test_queue_processing_end_to_end(
     final_progress = last_status_data.get("progress")
     final_message = last_status_data.get("statusMessage", "").lower()
 
-    # With the synthetic data fallback, the analysis should always complete successfully
-    # even if the AOI is invalid or yields no data. The results (map, stats) might be
-    # based on the synthetic 1x1 zero array, but the pipeline itself shouldn't fail.
+    # Define expected outcomes
     is_successful = final_progress == 100 and final_message == "завершено"
-    # is_expected_failure = final_progress == -1 and "empty array returned" in final_message # No longer expected
+    is_expected_no_scene_failure = (
+        final_progress == 35
+        and final_message == "не знайдено придатних сцен"
+        and last_status_data.get("status") == JobStatus.FAILED.value # Also check the enum value
+    )
 
-    assert is_successful, f"Final status unexpected: progress={final_progress}, message={last_status_data.get('statusMessage')}"
+    # Assert that the outcome is one of the expected ones
+    assert is_successful or is_expected_no_scene_failure, \
+        f"Final status unexpected: progress={final_progress}, status={last_status_data.get('status')}, message='{last_status_data.get('statusMessage')}'"
 
-    # if is_successful: # This condition is now asserted above
-    print("Job completed successfully (potentially with synthetic data).")
-    # elif is_expected_failure:
-    #     print("Job failed as expected due to empty array.")
-    # else: # Should not happen due to assert above, but for clarity
-    #     pytest.fail("Job ended in an unexpected state.")
+    if is_successful:
+        print("Job completed successfully.")
+    elif is_expected_no_scene_failure:
+        print("Job failed as expected: No usable scenes found.")
+    # No else needed because the assert above covers it
 
-    # 5. Verify final status update in blob storage (only if successful)
+    # 5. Verify final status update in blob storage
     print("Verifying final status blob...")
     status_blob_client = reports_container_client.get_blob_client(f"{job_id}/status.json")
     assert status_blob_client.exists(), "Status blob should always exist after completion or failure."
@@ -143,24 +146,31 @@ def test_queue_processing_end_to_end(
         assert status_data.progress == 100
         assert status_data.message == "Завершено" # Check for the actual Ukrainian message
         print("Final status blob verified for successful job.")
-    # elif is_expected_failure: # No longer applicable
-    #     assert status_data.status == JobStatus.FAILED
-    #     assert status_data.progress == -1
-    #     assert "empty array returned" in status_data.message.lower()
-    #     print("Final status blob verified for failed job (empty array).")
+    elif is_expected_no_scene_failure: # Status blob should reflect the specific failure
+        assert status_data.status == JobStatus.FAILED
+        assert status_data.progress == 35 # Or whatever progress level it fails at
+        assert status_data.message == "Не знайдено придатних сцен"
+        print("Final status blob verified for expected no-scene failure.")
 
     # 6. Verify report blob content (handles success and expected failure)
     print("Verifying report blob...")
-    report_blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
-    assert report_blob_client.exists(), "Report blob should exist after completion or expected failure."
-    report_content = report_blob_client.download_blob().readall()
-    report_data = ReportData.model_validate_json(report_content)
-    assert report_data.jobId == job_id
-    assert report_data.requestPayload is not None # Payload should always be included
+    if is_successful: # Only check for report blob if job was successful
+        report_blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
+        assert report_blob_client.exists(), "Report blob should exist after successful completion."
+        report_content = report_blob_client.download_blob().readall()
+        report_data = ReportData.model_validate_json(report_content)
+        assert report_data.jobId == job_id
+        assert report_data.requestPayload is not None # Payload should always be included
 
-    if is_successful: # Report blob should reflect success
+        # Report blob should reflect success
         assert report_data.status == JobStatus.COMPLETED
-        assert report_data.requestPayload.model_dump(exclude_none=True) == test_payload
+        # Modified assertion: Create expected payload by adding jobId to properties
+        expected_payload_dict = test_payload.copy()
+        if 'area' in expected_payload_dict and 'properties' not in expected_payload_dict['area']:
+            expected_payload_dict['area']['properties'] = {}
+        if 'area' in expected_payload_dict and isinstance(expected_payload_dict['area'].get('properties'), dict):
+             expected_payload_dict['area']['properties']['jobId'] = job_id
+        assert report_data.requestPayload.model_dump(exclude_none=True) == expected_payload_dict
         assert report_data.ndviStatistics is not None
         assert isinstance(report_data.ndviStatistics.get('mean'), (float, type(None)))
         # Check if stats reflect the synthetic data (mean=0, min=0, max=0, std=0, stress=0)
@@ -178,17 +188,14 @@ def test_queue_processing_end_to_end(
         assert report_data.mapUrls is not None and report_data.mapUrls != {}
         assert "ndvi" in report_data.mapUrls
         assert "rgb" in report_data.mapUrls # Even the synthetic RGB map URL should exist
+        assert report_data.mapUrls.get("stress") # Check stress map URL exists
         print("Report blob verified for successful job.")
-    # elif is_expected_failure: # No longer applicable
-    #      assert report_data.status == JobStatus.FAILED
-    #      # Verify the error message is in the recommendations field
-    #      assert "analysis failed: empty array returned" in report_data.recommendations.lower()
-    #      # Ensure stats and maps are empty/defaults for failure report
-    #      assert report_data.ndviStatistics == {}
-    #      assert report_data.mapUrls == {}
-    #      print("Report blob verified for failed job (empty array).")
-    else:
-        # This case should be prevented by the assertion in step 4
+    elif is_expected_no_scene_failure:
+         print("Skipping report blob verification for expected no-scene failure.")
+         # Optionally, could assert that the report *doesn't* exist here
+         # report_blob_client = reports_container_client.get_blob_client(f"{job_id}/report.json")
+         # assert not report_blob_client.exists(), "Report blob should NOT exist for no-scene failure."
+    else: # Should not be reachable due to earlier assertion
         pytest.fail("Reached unexpected state when verifying report blob.")
 
     # 7. Verify image blob existence and properties (only if successful)
@@ -228,7 +235,9 @@ def test_queue_processing_end_to_end(
             print("Stress image blob verified.")
         else:
             print("Skipping Stress image verification (URL not in report).")
-    else:
+    elif is_expected_no_scene_failure:
+        print("Skipping image verification for expected no-scene failure.")
+    else: # Should not be reachable
         print("Skipping image verification for non-successful job.")
 
     # 8. Delete message from queue
@@ -255,15 +264,16 @@ def test_queue_processing_end_to_end(
         assert "recommendations" in api_data
         assert api_data.get("recommendations") is not None and api_data.get("recommendations") != "" # Match successful blob content
         print("API report retrieval verified for successful job.")
-    elif is_expected_failure:
+    elif is_expected_no_scene_failure:
         # Report should still be retrievable, showing FAILED status
-        assert report_resp.status_code == status.HTTP_200_OK, f"Report API failed for failed job: {report_resp.text}"
+        assert report_resp.status_code == status.HTTP_200_OK, f"Report API failed for expected no-scene failure: {report_resp.text}"
         api_data = report_resp.json()
         assert api_data["status"] == JobStatus.FAILED.value
         assert api_data["jobId"] == job_id
-        # Check if the error message is propagated to the report's recommendations field
-        assert "empty array returned" in api_data.get("recommendations", "").lower()
-        print("API report retrieval verified for failed job (empty array).")
+        # Check if the failure state is reflected in the API response
+        assert api_data.get("ndviStatistics") is None or api_data.get("ndviStatistics") == {}
+        assert api_data.get("mapUrls") is None or api_data.get("mapUrls") == {}
+        print("API report retrieval verified for expected no-scene failure.")
     else:
         # For other unexpected states, maybe the report endpoint returns 404 or 500
         # Adjust assertion based on expected behavior for other failures

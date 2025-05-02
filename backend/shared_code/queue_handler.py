@@ -11,6 +11,7 @@ from rasterio.env import Env
 from rasterio.mask import mask
 from rasterio.warp import transform_geom
 from shapely.geometry import shape, mapping
+from pyproj import Geod
 from azure.storage.blob import ContentSettings
 from shared_code.helpers.blob import (
     get_sync_blob_service_client,
@@ -34,7 +35,10 @@ def _blank_gray():
 def _to_png(arr, gray):
     try:
         if gray:
-            scaled = ((arr + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
+            if arr.dtype == bool:              # stress‑layer
+                scaled = arr.astype(np.uint8) * 255
+            else:                              # NDVI
+                scaled = ((arr + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
             img = Image.fromarray(scaled, "L")
         else:
             if arr.ndim == 2:
@@ -94,23 +98,31 @@ def _stats(ndvi, thresh):
         stress_percentage=float(((ndvi < thresh) & m).sum() / v.size * 100),
     )
 
-def _read_band(href, geojson):
+def _read_band(href, geojson, indexes=None):
     try:
-        with Env(GDAL_HTTP_TIMEOUT=60):
+        with Env(GDAL_HTTP_TIMEOUT=180):
             with rasterio.open(href) as src:
+                logging.info(f"Reading band from {href} for geometry.")
                 geom = transform_geom("EPSG:4326", src.crs, geojson, precision=6)
                 out, _ = mask(src, [geom], crop=True, indexes=1, filled=True)
-                data = out[0]
+                if indexes is None:
+                    data = np.asarray(out[0])
+                else:
+                    out, _ = mask(src, [geom], crop=True, indexes=indexes, filled=True)
+                    data = np.stack(out, axis=-1)
                 if src.nodata is not None:
                     valid = np.isfinite(data) & (data != src.nodata)
                 else:
                     valid = np.isfinite(data)
-                if valid.sum() < MIN_PIX:
-                    raise RuntimeError(f"Too few valid pixels: {valid.sum()}")
-                return data, src.crs
+                valid_pixels = valid.sum()
+                logging.info(f"Found {valid_pixels} valid pixels in {href}.")
+                if valid_pixels < MIN_PIX:
+                    logging.warning(f"Too few valid pixels ({valid_pixels}, minimum required: {MIN_PIX}) in {href}. Skipping this band.")
+                    return None, None
+                return data.astype(np.float32), src.crs
     except Exception as e:
-        logging.warning(f"Band read failed {href}: {e}")
-        return _blank_gray(), None
+        logging.warning(f"Band read failed {href}: {e}", exc_info=True)
+        return None, None
 
 def _fetch_scenes(payload):
     from pystac_client import Client
@@ -127,9 +139,12 @@ def _fetch_scenes(payload):
         max_items=MAX_SCENES,
     )
 
+    item_collection = search.item_collection()
     scenes = []
-    for item in search.item_collection():
+    scene_ids = []
+    for item in item_collection:
         itm = sign(item)
+        scene_ids.append(item.id)
         urls = {}
         for key, opts in {"nir": ["B08", "B08_20m"], "red": ["B04", "B04_20m"]}.items():
             for o in opts:
@@ -139,6 +154,8 @@ def _fetch_scenes(payload):
         if "visual" in itm.assets:
             urls["visual"] = itm.assets["visual"].href
         scenes.append(urls)
+
+    logging.info(f"Found {len(scenes)} scenes for job {payload.area.properties.get('jobId', 'N/A') if payload.area.properties else 'N/A'} matching criteria. Scene IDs: {scene_ids}")
     return scenes
 
 def process_analysis(msg: func.QueueMessage):
@@ -151,33 +168,109 @@ def process_analysis(msg: func.QueueMessage):
         logging.error(f"Failed to parse message: {e}")
         return
 
+    if payload.area.properties is None:
+        payload.area.properties = {}
+    payload.area.properties['jobId'] = jid
+
     metadata = {"jobId": jid, "dateRange": payload.date_range}
     update_job_status(client, jid, JobStatus.PROCESSING, 0, "Ініціалізація", raw=json.dumps(metadata))
 
+    try:
+        input_geojson = payload.area.geometry.model_dump()
+        poly = shape(input_geojson)
+        geod = Geod(ellps="WGS84")
+        area_m2, _ = geod.geometry_area_perimeter(poly)
+        area_km2 = abs(area_m2) / 1_000_000
+        metadata["areaSqKm"] = area_km2
+        min_lon, min_lat, max_lon, max_lat = poly.bounds
+        bounds = ((min_lat, min_lon), (max_lat, max_lon))
+        metadata["imageBounds"] = bounds
+        center_lon, center_lat = poly.centroid.x, poly.centroid.y
+        map_center = [center_lat, center_lon]
+        metadata["mapCenter"] = map_center
+        if area_km2 > 1000:
+            map_zoom = 8
+        elif area_km2 > 100:
+            map_zoom = 10
+        elif area_km2 > 10:
+            map_zoom = 12
+        elif area_km2 > 1:
+            map_zoom = 14
+        else:
+            map_zoom = 16
+        metadata["mapZoom"] = map_zoom
+        logging.info(f"Job {jid}: Calculated Area={area_km2:.2f} km², Center={map_center}, Bounds={bounds}, Zoom={map_zoom}")
+    except Exception as e:
+        logging.error(f"Job {jid}: Failed to calculate geographic metadata: {e}", exc_info=True)
+        area_km2 = None
+        bounds = None
+        map_center = None
+        map_zoom = None
+
     scenes = _fetch_scenes(payload)
     metadata["scenesFetched"] = len(scenes)
+    if not scenes:
+        logging.error(f"Job {jid}: No scenes found matching the criteria.")
+        update_job_status(client, jid, JobStatus.FAILED, 10, "Сцени не знайдено", raw=json.dumps(metadata))
+        return
     update_job_status(client, jid, JobStatus.PROCESSING, 10, "Завантаження сцен", raw=json.dumps(metadata))
 
     geom = _buffer_geom(payload.area.geometry.model_dump(), meters=30)
 
     chosen = None
+    best_ndvi_std = -1 # Track the standard deviation of the best scene found so far
+    best_scene_data = None # Store nir, red, and urls for the best scene
+
     for idx, urls in enumerate(scenes, 1):
         metadata["sceneIndex"] = idx
-        update_job_status(client, jid, JobStatus.PROCESSING, 20, "Читання спектрів", raw=json.dumps(metadata))
-        nir, _ = _read_band(urls.get("nir", ""), geom)
-        red, _ = _read_band(urls.get("red", ""), geom)
-        if nir.size > 1 and red.size > 1:
-            chosen = urls
-            break
+        update_job_status(client, jid, JobStatus.PROCESSING, 20 + int(idx / len(scenes) * 15), f"Читання спектрів (сцена {idx}/{len(scenes)})", raw=json.dumps(metadata)) # More granular progress
+        
+        nir_band, _ = _read_band(urls.get("nir", ""), geom)
+        red_band, _ = _read_band(urls.get("red", ""), geom)
 
-    if not chosen:
-        logging.error(f"No usable scenes for job {jid}")
-        update_job_status(client, jid, JobStatus.FAILED, 15, "Сцени не знайдено", raw=json.dumps(metadata))
+        # Check if both bands were read successfully
+        if nir_band is not None and red_band is not None:
+            logging.info(f"Job {jid}, Scene {idx}: Successfully read NIR and Red bands.")
+            # Perform initial downsampling before calculating NDVI for this scene
+            nir_ds = _dynamic_downsample(nir_band)
+            red_ds = _dynamic_downsample(red_band)
+            
+            # Calculate NDVI for this specific scene to check its quality
+            current_ndvi = _ndvi(nir_ds, red_ds)
+            current_ndvi_std = np.nanstd(current_ndvi)
+            
+            logging.info(f"Job {jid}, Scene {idx}: Calculated NDVI std dev: {current_ndvi_std:.4f}")
+
+            # Check if this NDVI has non-zero standard deviation (indicates variation)
+            if current_ndvi_std > 0:
+                # If this is the first valid scene or better than the current best, select it
+                if best_scene_data is None or current_ndvi_std > best_ndvi_std:
+                    logging.info(f"Job {jid}, Scene {idx}: Selecting as best scene (std dev: {current_ndvi_std:.4f}).")
+                    best_ndvi_std = current_ndvi_std
+                    # Store the *original* (non-downsampled) bands and URLs
+                    best_scene_data = {
+                        "nir": nir_band,
+                        "red": red_band,
+                        "urls": urls
+                    }
+            else:
+                logging.warning(f"Job {jid}, Scene {idx}: NDVI std dev is zero, likely uniform data (e.g., all cloud/water). Skipping.")
+        else:
+             logging.warning(f"Job {jid}, Scene {idx}: Failed to read NIR or Red band. Skipping.")
+
+    # After checking all scenes, proceed if a best scene was found
+    if best_scene_data:
+        chosen = best_scene_data["urls"]
+        nir = best_scene_data["nir"] # Use the stored original band
+        red = best_scene_data["red"] # Use the stored original band
+        logging.info(f"Job {jid}: Proceeding with chosen scene (best NDVI std dev: {best_ndvi_std:.4f}).")
+    else:
+        logging.error(f"No usable scenes found for job {jid} after checking {len(scenes)} candidates.")
+        update_job_status(client, jid, JobStatus.FAILED, 35, "Не знайдено придатних сцен", raw=json.dumps(metadata))
         return
 
     update_job_status(client, jid, JobStatus.PROCESSING, 40, "Обчислення NDVI", raw=json.dumps(metadata))
-    nir, _ = _read_band(chosen["nir"], geom)
-    red, _ = _read_band(chosen["red"], geom)
+    # Final downsampling and NDVI calculation using the chosen best scene's bands
     nir = _dynamic_downsample(nir)
     red = _dynamic_downsample(red)
     ndvi = _ndvi(nir, red)
@@ -186,16 +279,25 @@ def process_analysis(msg: func.QueueMessage):
     stats = _stats(ndvi, thresh)
     metadata["ndviStats"] = stats
 
+    # Check if stats calculation resulted in non-null values, otherwise fail
+    if stats.get('mean') is None:
+        logging.error(f"Job {jid}: NDVI statistics calculation failed (all NaN?). Failing job.")
+        update_job_status(client, jid, JobStatus.FAILED, 50, "Помилка розрахунку статистики NDVI", raw=json.dumps(metadata))
+        return
+
     update_job_status(client, jid, JobStatus.PROCESSING, 60, "Завантаження зображення NDVI", raw=json.dumps(metadata))
     nd_url = _upload(client, jid, _to_png(ndvi, True), "ndvi.png")
 
     vis_url = ""
     if "visual" in chosen:
-        rgb, _ = _read_band(chosen["visual"], geom)
-        rgb = _dynamic_downsample(rgb)
-        if rgb.size > 1:
+        # Read the visual band only for the *chosen* scene
+        rgb, _ = _read_band(chosen["visual"], geom, indexes=[1,2,3])
+        if rgb is not None:
+            rgb = _dynamic_downsample(rgb)
             update_job_status(client, jid, JobStatus.PROCESSING, 70, "Завантаження зображення RGB", raw=json.dumps(metadata))
             vis_url = _upload(client, jid, _to_png(rgb, False), "rgb.png")
+        else:
+             logging.warning(f"Job {jid}: Failed to read visual band for the chosen scene.")
 
     update_job_status(client, jid, JobStatus.PROCESSING, 80, "Завантаження зображення зон стресу", raw=json.dumps(metadata))
     st_url = _upload(client, jid, _to_png((ndvi < thresh).astype(np.float32), True), "stress.png")
@@ -217,6 +319,11 @@ def process_analysis(msg: func.QueueMessage):
         ndviStatistics=stats,
         mapUrls={"ndvi": nd_url, "rgb": vis_url, "stress": st_url},
         recommendations=recs,
+        areaSqKm=area_km2,
+        mapCenter=map_center,
+        mapZoom=map_zoom,
+        imageBounds=bounds,
+        selectedArea=payload.area.model_dump()
     )
 
     client.get_blob_client(REPORTS_CONTAINER_NAME, f"{jid}/report.json").upload_blob(

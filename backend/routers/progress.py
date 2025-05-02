@@ -53,12 +53,14 @@ async def get_progress(
                 "progress": update.progress,
                 "statusMessage": update.message,
                 "isComplete": update.status in (JobStatus.COMPLETED, JobStatus.FAILED),
+                "status": update.status.value,
             }
         else:
             payload = {
                 "progress": 0,
                 "statusMessage": "Початок аналізу",
                 "isComplete": False,
+                "status": JobStatus.PENDING.value,
             }
 
         return JSONResponse(status_code=200, content=payload)
