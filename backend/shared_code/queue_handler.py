@@ -2,6 +2,7 @@ import logging, json
 from io import BytesIO
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 import numpy as np
 from PIL import Image
@@ -255,6 +256,7 @@ def process_analysis(msg: func.QueueMessage):
     except Exception as e:
         logging.error(f"Job {jid}: Failed to calculate geographic metadata: {e}", exc_info=True)
         metadata["downsampleFactor"] = factor
+    time.sleep(1)
 
     scenes, scene_meta = _fetch_scenes(payload)
     metadata["scenesFetched"] = len(scenes)
@@ -262,6 +264,7 @@ def process_analysis(msg: func.QueueMessage):
         logging.error(f"Job {jid}: No scenes found matching the criteria.")
         update_job_status(client, jid, JobStatus.FAILED, 10, "Сцени не знайдено", raw=json.dumps(metadata))
         return
+    time.sleep(2)
 
     chosen_scene_urls = scenes[0]
     scene_id = chosen_scene_urls.get("id", "N/A")
@@ -281,9 +284,11 @@ def process_analysis(msg: func.QueueMessage):
         logging.error(f"Job {jid}: Missing NIR ('{nir_url}') or Red ('{red_url}') band URL in scene {scene_id}.")
         update_job_status(client, jid, JobStatus.FAILED, 25, "Відсутні URL спектрів", raw=json.dumps(metadata))
         return
+    time.sleep(1)
 
     nir, nir_crs = _read_band(nir_url, geom_buf, factor=factor, min_pix=MIN_PIX)
     red, red_crs = _read_band(red_url, geom_buf, factor=factor, min_pix=MIN_PIX)
+    time.sleep(5)
 
     if nir is None or red is None:
         missing_bands = []
@@ -296,6 +301,7 @@ def process_analysis(msg: func.QueueMessage):
 
     update_job_status(client, jid, JobStatus.PROCESSING, 40, "Обчислення NDVI", raw=json.dumps(metadata))
     ndvi = _ndvi(nir, red)
+    time.sleep(3)
     thresh = payload.ndvi_threshold
     metadata["ndviThreshold"] = thresh
     stats = _stats(ndvi, thresh)
@@ -308,6 +314,7 @@ def process_analysis(msg: func.QueueMessage):
 
     update_job_status(client, jid, JobStatus.PROCESSING, 60, "Завантаження зображення NDVI", raw=json.dumps(metadata))
     nd_url = _upload(client, jid, _to_png(ndvi, True), "ndvi.png")
+    time.sleep(2)
 
     vis_url = ""
     visual_url = chosen_scene_urls.get("visual")
@@ -317,6 +324,7 @@ def process_analysis(msg: func.QueueMessage):
         if rgb is not None:
             update_job_status(client, jid, JobStatus.PROCESSING, 75, "Завантаження зображення RGB", raw=json.dumps(metadata))
             vis_url = _upload(client, jid, _to_png(rgb, False), "rgb.png")
+            time.sleep(2)
         else:
              logging.warning(f"Job {jid}: Failed to read visual band ({visual_url}) for the chosen scene {scene_id}.")
              update_job_status(client, jid, JobStatus.PROCESSING, 78, "Пропуск RGB (помилка читання)", raw=json.dumps(metadata))
@@ -328,6 +336,7 @@ def process_analysis(msg: func.QueueMessage):
     update_job_status(client, jid, JobStatus.PROCESSING, 80, "Обробка зон стресу", raw=json.dumps(metadata))
     stress_layer = (ndvi < thresh)
     st_url = _upload(client, jid, _to_png(stress_layer, True), "stress.png")
+    time.sleep(2)
 
     update_job_status(client, jid, JobStatus.PROCESSING, 90, "Підготовка рекомендацій", raw=json.dumps(metadata))
     recs = "Рекомендації не вдалося згенерувати."
@@ -335,6 +344,7 @@ def process_analysis(msg: func.QueueMessage):
         recs = generate_openai_recommendations(jid, ndvi, stress_layer, payload.crop_type)
         metadata["recommendationGenerated"] = True
         metadata["recommendationLength"] = len(recs) if isinstance(recs, str) else 0
+        time.sleep(5)
     except Exception as e:
         recs = "Не вдалося згенерувати рекомендації через помилку."
         metadata["recommendationGenerated"] = False
@@ -371,6 +381,7 @@ def process_analysis(msg: func.QueueMessage):
             content_settings=ContentSettings(content_type="application/json")
         )
         logging.info(f"Job {jid}: Successfully uploaded report.json")
+        time.sleep(1)
     except Exception as e:
         logging.error(f"Job {jid}: Failed to upload report.json: {e}", exc_info=True)
         update_job_status(client, jid, JobStatus.FAILED, 95, "Помилка збереження звіту", raw=json.dumps(metadata))
