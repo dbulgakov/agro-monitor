@@ -9,8 +9,9 @@ import numpy as np
 from PIL import Image
 import azure.functions as func
 import rasterio
-from rasterio.windows import from_bounds
 from rasterio.env import Env
+from rasterio.mask import mask
+from rasterio.warp import transform_geom
 from azure.storage.blob import ContentSettings
 from shapely.geometry import shape as shapely_shape
 from pyproj import Geod
@@ -82,51 +83,51 @@ def upload_png_buffer(client, job_id: str, buf: BytesIO, name: str) -> Optional[
 
 
 def read_band_windowed(href: str, bounds_geojson: dict, band_index: int = 1) -> np.ndarray:
-    # Extract polygon bounds: assume one exterior ring
-    coords = bounds_geojson.get("coordinates", [[]])[0]
-    if not coords:
-        raise RuntimeError("Invalid geometry bounds for windowed read.")
-    xs = [pt[0] for pt in coords]
-    ys = [pt[1] for pt in coords]
-    req_minx, req_maxx = min(xs), max(xs)
-    req_miny, req_maxy = min(ys), max(ys)
+    """Read a raster band intersecting the given AOI.
 
-    # Set GDAL HTTP timeout using rasterio.Env
+    1.  Reprojects the AOI (assumed to be EPSG:4326) into the raster CRS.
+    2.  Uses ``rasterio.mask.mask`` to pull only the pixels that fall inside the AOI.
+    3.  Performs a few sanity-checks to be sure we did not get an empty or all-nodata array.
+    """
+
+    # Fast-fail on obviously wrong input
+    if not bounds_geojson or "coordinates" not in bounds_geojson:
+        raise RuntimeError("Invalid AOI geometry passed to read_band_windowed")
+
     with Env(GDAL_HTTP_TIMEOUT=60):
         with rasterio.open(href) as src:
-            # Check for intersection
-            intersect_minx = max(req_minx, src.bounds.left)
-            intersect_miny = max(req_miny, src.bounds.bottom)
-            intersect_maxx = min(req_maxx, src.bounds.right)
-            intersect_maxy = min(req_maxy, src.bounds.top)
+            # Re-project AOI from WGS84 into the raster's CRS so that the units match (e.g. UTM metres)
+            try:
+                geom_proj = transform_geom("EPSG:4326", src.crs, bounds_geojson, precision=6)
+            except Exception as e:
+                raise RuntimeError(f"Could not reproject AOI to raster CRS: {e}")
 
-            if intersect_minx >= intersect_maxx or intersect_miny >= intersect_maxy:
-                raise ValueError(
-                    f"Requested area [{req_minx:.4f}, {req_miny:.4f}, {req_maxx:.4f}, {req_maxy:.4f}] "
-                    f"does not overlap with image bounds [{src.bounds.left:.4f}, {src.bounds.bottom:.4f}, "
-                    f"{src.bounds.right:.4f}, {src.bounds.top:.4f}]."
-                )
+            # Quickly verify intersection in projected coordinates before attempting to read
+            xs = [pt[0] for pt in geom_proj["coordinates"][0]]
+            ys = [pt[1] for pt in geom_proj["coordinates"][0]]
+            if (
+                max(xs) < src.bounds.left
+                or min(xs) > src.bounds.right
+                or max(ys) < src.bounds.bottom
+                or min(ys) > src.bounds.top
+            ):
+                raise RuntimeError("AOI completely outside raster bounds — skipping scene")
 
-            # Calculate window based on intersection
-            window = from_bounds(
-                intersect_minx, intersect_miny, intersect_maxx, intersect_maxy, transform=src.transform
-            )
-            
-            # Read data from the calculated window
-            data = src.read(band_index, window=window, boundless=True, fill_value=src.nodata)
+            # ``mask`` returns an array in shape (bands, rows, cols)
+            try:
+                out_image, _ = mask(src, [geom_proj], crop=True, indexes=band_index, filled=True)
+            except ValueError as e:
+                # Raised when shapes do not overlap raster
+                raise RuntimeError(f"AOI does not intersect raster: {e}")
 
-            # Check if the read data is valid
+            data = out_image[0]  # first (and only) band requested
+
+            # Sanity checks
             if data.size == 0:
-                 raise ValueError(
-                    f"Read window resulted in an empty array (intersection bounds: "
-                    f"[{intersect_minx:.4f}, {intersect_miny:.4f}, {intersect_maxx:.4f}, {intersect_maxy:.4f}])."
-                )
+                raise RuntimeError("Masked read returned an empty array")
 
             if src.nodata is not None and np.all(data == src.nodata):
-                raise ValueError(
-                    f"Requested area contains only nodata values (intersection bounds: "
-                    f"[{intersect_minx:.4f}, {intersect_miny:.4f}, {intersect_maxx:.4f}, {intersect_maxy:.4f}])."
-                )
+                raise RuntimeError("Masked read is entirely nodata")
 
             return data
 
@@ -191,16 +192,31 @@ def fetch_band_urls(client, job_id: str, payload: StartAnalysisPayload) -> Dict[
     if not items:
         raise RuntimeError("No matching Sentinel-2 items found.")
     item = sign(items[0])
-    required = {"B08", "B04"}
-    missing = required - set(item.assets.keys())
-    if missing:
-        raise RuntimeError(f"Missing bands {missing}")
-    visual_key = "visual" if "visual" in item.assets else "B04"
-    return {
-        "nir": item.assets["B08"].href,
-        "red": item.assets["B04"].href,
-        "visual": item.assets[visual_key].href,
+    # Prefer lower-resolution (20 m) assets to reduce data volume. Fall back to 10 m/full-res.
+    candidate_keys = {
+        "nir": ["B08_20m", "B08_10m", "B08"],
+        "red": ["B04_20m", "B04_10m", "B04"],
     }
+
+    selected = {}
+    for k, options in candidate_keys.items():
+        for opt in options:
+            if opt in item.assets:
+                selected[k] = item.assets[opt].href
+                break
+        else:
+            raise RuntimeError(f"Missing required asset for {k}: tried {options}")
+
+    # Visual (RGB) asset is optional – choose best available.
+    visual_opts = ["visual", "B04_20m", "B04"]
+    visual_href = None
+    for opt in visual_opts:
+        if opt in item.assets:
+            visual_href = item.assets[opt].href
+            break
+
+    selected["visual"] = visual_href
+    return selected
 
 
 def compute_ndvi(nir: np.ndarray, red: np.ndarray) -> np.ndarray:
@@ -270,8 +286,21 @@ def process_analysis(msg: func.QueueMessage):
         update_job_status(client, job_id, JobStatus.PROCESSING, 90, "Generating recommendations")
         thresh = getattr(payload, "ndvi_threshold", 0.3)
         mask = np.isfinite(ndvi)
+        if ndvi.size <= 1:
+            recs = "Недостатньо даних для аналізу NDVI на заданій ділянці."
+            # No stress calculation needed specifically for recommendations here
+        else:
+            # Calculate stress specifically for OpenAI input
+            stress_for_recs = (ndvi < thresh) & mask
+            try:
+                recs = generate_openai_recommendations(job_id, ndvi, stress_for_recs, payload.crop_type)
+            except Exception as e:
+                logging.warning(f"Failed to generate AI recommendations: {e}")
+                recs = "Не вдалося згенерувати рекомендації через помилку."
+        
+        # Calculate the definitive stress mask for statistics, regardless of ndvi size
         stress = (ndvi < thresh) & mask
-        recs = generate_openai_recommendations(job_id, ndvi, stress, payload.crop_type)
+        
         update_job_status(client, job_id, JobStatus.PROCESSING, 95, "Recommendations generated")
 
         # 5) Stats
