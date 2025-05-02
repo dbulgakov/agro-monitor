@@ -1,26 +1,23 @@
 import logging
 import numpy as np
-import rasterio
 from rasterio.io import MemoryFile
-from rasterio.enums import Resampling # Import Resampling
-import requests # Use requests instead of aiohttp
+from rasterio.enums import Resampling
+import requests 
 from requests.exceptions import RequestException, Timeout
 from typing import Optional
 
-from .blob import get_async_blob_service_client  # not used here but included
 
-# Define timeout settings for HTTP requests (in seconds)
 REQUESTS_CONNECT_TIMEOUT = 10
-REQUESTS_READ_TIMEOUT = 60 # Timeout for reading the response
+REQUESTS_READ_TIMEOUT = 60 
 
-DOWNSCALE_FACTOR = 2 # Define the downscale factor globally or pass as arg
-RESAMPLING_METHOD = Resampling.bilinear # Choose resampling method
+DOWNSCALE_FACTOR = 2 
+RESAMPLING_METHOD = Resampling.bilinear
 
 def _download_data(url: str, log_adapter: logging.LoggerAdapter) -> bytes:
     log_adapter.info(f"Початок завантаження: {url[:100]}...")
     try:
         response = requests.get(url, timeout=(REQUESTS_CONNECT_TIMEOUT, REQUESTS_READ_TIMEOUT), stream=True)
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status()
         data = response.content
         log_adapter.info(f"Завантажено {len(data)} байт з {url[:100]}...")
         return data
@@ -38,10 +35,8 @@ def _download_data(url: str, log_adapter: logging.LoggerAdapter) -> bytes:
 def _sync_read_band_from_bytes(data: bytes, downscale_factor: int) -> np.ndarray:
     with MemoryFile(data) as memfile:
         with memfile.open() as dataset:
-            # Calculate output shape
-            out_height = dataset.height // downscale_factor
-            out_width = dataset.width // downscale_factor
-            # Read data with downsampling
+            out_height = dataset.height
+            out_width = dataset.width 
             band_data = dataset.read(
                 1,
                 out_shape=(dataset.count, out_height, out_width),
@@ -53,23 +48,18 @@ def read_band(job_id: str, url: str) -> np.ndarray:
     log_adapter = logging.getLogger(__name__).getChild(job_id)
     try:
         band_data = _download_data(url, log_adapter)
-        # Pass downscale factor
         return _sync_read_band_from_bytes(band_data, DOWNSCALE_FACTOR)
     except Exception as e:
-        # Log error specific to band reading after download/processing
         log_adapter.error(f"Помилка читання або обробки даних каналу з {url[:100]}...: {e}", exc_info=True)
-        # Re-raise as a runtime error to be caught by the caller
         raise RuntimeError(f"Error reading or processing band data from {url[:100]}...") from e
 
 def _sync_read_rgb_from_bytes(data: bytes, downscale_factor: int) -> np.ndarray:
     with MemoryFile(data) as memfile:
         with memfile.open() as dataset:
-            # Calculate output shape
             out_height = dataset.height // downscale_factor
             out_width = dataset.width // downscale_factor
 
             if dataset.count >= 3:
-                # Read RGB bands with downsampling
                 img = dataset.read(
                     [1, 2, 3],
                     out_shape=(dataset.count, out_height, out_width),
@@ -98,7 +88,6 @@ def read_rgb(job_id: str, url: str) -> Optional[np.ndarray]:
         # Pass downscale factor
         rgb_array = _sync_read_rgb_from_bytes(rgb_data, DOWNSCALE_FACTOR)
 
-        # Transpose from (bands, height, width) to (height, width, bands) expected by PIL/downstream
         if rgb_array.ndim == 3 and rgb_array.shape[0] in [1, 3]: # Handles both RGB and adapted grayscale
             return np.transpose(rgb_array, (1, 2, 0))
         else:
@@ -106,10 +95,8 @@ def read_rgb(job_id: str, url: str) -> Optional[np.ndarray]:
             return None # Cannot proceed with unexpected shape
 
     except RuntimeError as e:
-        # Handle download errors specifically (already logged in _download_data)
         log_adapter.warning(f"Не вдалося завантажити або обробити RGB з {url[:100]}..., обробка продовжиться без нього. Помилка: {e}")
         return None
     except Exception as e:
         log_adapter.error(f"Неочікувана помилка обробки RGB даних з {url[:100]}...: {e}", exc_info=True)
-        # Return None if processing fails, as RGB is often optional
         return None

@@ -45,18 +45,36 @@ def get_report(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    if status_val != JobStatus.COMPLETED:
-        partial = ReportData(jobId=job_id, status=status_val)
-        code = status.HTTP_202_ACCEPTED if status_val in (JobStatus.PENDING, JobStatus.PROCESSING) else status.HTTP_200_OK
-        raise HTTPException(status_code=code, detail=partial.model_dump(exclude_none=True))
-
+    # Always try to read the full report blob if it exists, regardless of status
     try:
-        raw = report_blob.download_blob().readall()
-        rpt = ReportData.model_validate_json(raw)
-        return rpt
-    except ResourceNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Completed report not found")
+        if report_blob.exists():
+            raw = report_blob.download_blob().readall()
+            rpt = ReportData.model_validate_json(raw)
+            # Ensure the status from the report blob matches the status blob if both exist
+            if rpt.status != status_val:
+                 logging.warning(f"Status mismatch for job {job_id}: status.json says {status_val}, report.json says {rpt.status}. Returning report.json status.")
+            return rpt
+        # If report blob doesn't exist, handle based on status_val
+        elif status_val != JobStatus.COMPLETED:
+             # For non-completed jobs without a report file, return partial status
+             partial = ReportData(jobId=job_id, status=status_val)
+             code = status.HTTP_202_ACCEPTED if status_val in (JobStatus.PENDING, JobStatus.PROCESSING) else status.HTTP_200_OK
+             # Use the model directly as response body for non-200 codes if desired, or keep in detail
+             # For consistency, let's return the partial model directly with 200 for FAILED
+             if status_val == JobStatus.FAILED:
+                  return partial # Return the partial model directly with 200 OK
+             else:
+                  # For PENDING/PROCESSING, raise 202 with detail
+                  raise HTTPException(status_code=status.HTTP_202_ACCEPTED, detail=partial.model_dump(exclude_none=True))
+        else:
+            # Status is COMPLETED but report.json is missing
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Completed report data is missing.")
+
+    except ResourceNotFoundError: # Should be caught by report_blob.exists(), but just in case
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report data not found (ResourceNotFoundError).")
     except ValidationError as ve:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(ve))
+        logging.error(f"Validation error reading report for job {job_id}: {ve}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error reading report data: {ve}")
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logging.error(f"Error retrieving report for job {job_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal error retrieving report: {e}")

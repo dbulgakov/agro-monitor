@@ -30,7 +30,6 @@ def test_progress_for_nonexistent_job(client):
     assert "progress" in data
     assert "statusMessage" in data
     assert "isComplete" in data
-    # Check default values for a non-existent job
     assert data["progress"] == 0
     assert data["statusMessage"] == "Початок аналізу" # Or similar default message
     assert data["isComplete"] is False
@@ -47,7 +46,6 @@ def test_job_failure_simulation(
     client,
     analysis_queue_client, # Sync queue client
     reports_container_client, # Sync blob container client
-    # images_container_client is not used directly here
     blob_service_client # Sync blob service client
 ):
     # Configure the mock to raise an error when called
@@ -80,13 +78,10 @@ def test_job_failure_simulation(
     assert message, "Expected message in queue for failure test"
     raw_message = message.content
 
-    # Process the message directly (sync)
     dummy_msg = DummyMsg(raw_message)
-    # process_analysis should catch the exception from the mock and update status
-    process_analysis(dummy_msg, blob_service_client)
+    process_analysis(dummy_msg)
 
-    # Verify status is FAILED (sync check)
-    # Add a small delay to allow status update to propagate if needed
+ 
     time.sleep(1)
     status_update = get_job_status(blob_service_client, job_id)
     assert status_update is not None, "Status blob should exist after failure"
