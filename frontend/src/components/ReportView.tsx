@@ -10,6 +10,13 @@ import { FeatureCollection, Point, Polygon, Feature, Geometry } from 'geojson';
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then(mod => mod.TileLayer), { ssr: false });
 const GeoJSON = dynamic(() => import('react-leaflet').then(mod => mod.GeoJSON), { ssr: false });
+const ImageOverlay = dynamic(() => import('react-leaflet').then(mod => mod.ImageOverlay), { ssr: false });
+const LayersControl = dynamic(() => import('react-leaflet').then(mod => mod.LayersControl), { ssr: false });
+const LayerGroup = dynamic(() => import('react-leaflet').then(mod => mod.LayerGroup), { ssr: false });
+
+// Add dynamic imports for BaseLayer and Overlay
+const BaseLayer = dynamic(() => import('react-leaflet').then(mod => mod.LayersControl.BaseLayer), { ssr: false });
+const Overlay = dynamic(() => import('react-leaflet').then(mod => mod.LayersControl.Overlay), { ssr: false });
 
 // Define props using the imported ReportData type
 interface ReportViewProps {
@@ -22,8 +29,21 @@ interface HealthProperties {
 }
 
 const ReportView: React.FC<ReportViewProps> = ({ reportData }) => {
-  // Destructure needed data. Ensure selectedArea is also available in ReportData type.
-  const { resultGeoJson, selectedArea, mapCenter = [50.45, 30.52], mapZoom = 13 } = reportData;
+  // Destructure needed data. Use updated fields.
+  const { 
+    selectedArea, 
+    mapCenter = [50.45, 30.52], 
+    mapZoom = 13, 
+    ndviStatistics, 
+    mapUrls, 
+    recommendations, 
+    imageBounds 
+  } = reportData;
+
+  // NOTE: The component currently uses 'resultGeoJson' which was removed from the updated ReportData type.
+  // We'll comment it out for now. The logic for displaying colored zones needs to be adapted 
+  // potentially using the ndviStatistics or the new stress map if required.
+  // const { resultGeoJson } = reportData; 
 
   // Style function for analysis result GeoJSON layers (colored zones)
   const styleResultFeature = (feature: Feature<Geometry, HealthProperties> | undefined) => {
@@ -54,36 +74,64 @@ const ReportView: React.FC<ReportViewProps> = ({ reportData }) => {
     opacity: 1, 
   });
 
-  // Check if resultGeoJson has features
-  const hasResultFeatures = resultGeoJson && resultGeoJson.features && resultGeoJson.features.length > 0;
+  // Check if resultGeoJson has features - This logic needs update
+  // const hasResultFeatures = resultGeoJson && resultGeoJson.features && resultGeoJson.features.length > 0;
+  const hasResultFeatures = false; // Placeholder - update required
+
+  // TODO: Add logic to potentially display the stress map from mapUrls.stress
 
   return (
-      // Remove the outer div and redundant sections
-      <div className="h-96 rounded-md overflow-hidden border border-gray-200"> {/* Keep height and border */} 
+      <div className="h-96 rounded-md overflow-hidden border border-gray-200"> 
+        {/* Remove the outer div and redundant sections */} {/* Keep height and border */} 
         {typeof window !== 'undefined' ? (
           <MapContainer center={mapCenter} zoom={mapZoom} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }}>
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            
-            {/* 1. Render the original selected area */}
-            {selectedArea && (
-               <GeoJSON
-                  key={"selected-" + JSON.stringify(selectedArea.geometry)} // Key for selected area
-                  data={selectedArea}
-                  style={styleSelectedArea}
-                />
-            )}
+             <LayersControl position="topright">
+                <BaseLayer checked name="OpenStreetMap">
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                   />
+                </BaseLayer>
+                <BaseLayer name="Satellite">
+                   <TileLayer 
+                      url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" 
+                      attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+                   />
+                </BaseLayer>
 
-            {/* 2. Render the analysis result GeoJSON (if available) */}
-            {hasResultFeatures && resultGeoJson && (
-               <GeoJSON
-                  key={"result-" + JSON.stringify(resultGeoJson)} // Key for result area
-                  data={resultGeoJson as FeatureCollection<Polygon|Point, HealthProperties>} 
-                  style={styleResultFeature}
-                />
-            )}
+                <Overlay checked name="Selected Area">
+                  <LayerGroup>
+                    {selectedArea && (
+                     <GeoJSON
+                       key={"selected-" + JSON.stringify(selectedArea.geometry)} // Key for selected area
+                       data={selectedArea}
+                       style={styleSelectedArea}
+                     />
+                   )}
+                  </LayerGroup>
+                </Overlay>
+
+                {mapUrls?.ndvi && imageBounds && (
+                  <Overlay name="NDVI Map">
+                    <ImageOverlay url={mapUrls.ndvi} bounds={imageBounds} opacity={0.7} zIndex={10} />
+                  </Overlay>
+                )}
+
+                {mapUrls?.rgb && imageBounds && (
+                  <Overlay name="RGB Map">
+                    <ImageOverlay url={mapUrls.rgb} bounds={imageBounds} opacity={1} zIndex={10} />
+                  </Overlay>
+                )}
+
+                {mapUrls?.stress && imageBounds && (
+                  <Overlay checked name="Stress Zone Map">
+                    <ImageOverlay url={mapUrls.stress} bounds={imageBounds} opacity={0.6} zIndex={10} />
+                  </Overlay>
+                )}
+               
+               {/* TODO: Optionally add back the resultGeoJson logic if needed and available */}
+
+             </LayersControl>
           </MapContainer>
         ) : (
            <div className="h-full bg-gray-200 flex items-center justify-center">

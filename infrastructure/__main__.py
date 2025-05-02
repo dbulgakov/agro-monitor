@@ -32,9 +32,17 @@ sa = storage.StorageAccount(
     location=rg.location,
     sku=storage.SkuArgs(name=storage.SkuName.STANDARD_LRS),
     kind=storage.Kind.STORAGE_V2,
+    allow_blob_public_access=True,
 )
 
-images_container = storage.BlobContainer("images", account_name=sa.name, resource_group_name=rg.name, container_name="images")
+images_container = storage.BlobContainer(
+    "images",
+    account_name=sa.name,
+    resource_group_name=rg.name,
+    container_name="images",
+    public_access=storage.PublicAccess.BLOB,
+    opts=pulumi.ResourceOptions(depends_on=[sa]),
+)
 reports_container = storage.BlobContainer("reports", account_name=sa.name, resource_group_name=rg.name, container_name="reports")
 queue = storage.Queue("analysis-requests", account_name=sa.name, resource_group_name=rg.name, queue_name="analysis-requests")
 

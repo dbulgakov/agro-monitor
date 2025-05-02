@@ -100,15 +100,10 @@ class ReportData(BaseModel):
     recommendations: Optional[str] = None
     errorMessage: Optional[str] = None
     selectedArea: Optional[Dict[str, Any]] = None
-    parameters: Optional[Dict[str, Any]] = None
     areaSqKm: Optional[float] = None
-    snapshotImageUrl: Optional[str] = None
-    ndviImageUrl: Optional[str] = None
-    stressZoneImageUrl: Optional[str] = None
-    stressPercentage: Optional[float] = None
-    summary: Optional[str] = None
     mapCenter: Optional[List[float]] = None
     mapZoom: Optional[int] = None
+    imageBounds: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = Field(None, description="Bounds of the generated map images as ((min_lat, min_lon), (max_lat, max_lon))")
 
 class ErrorResponse(BaseModel):
     message: str
