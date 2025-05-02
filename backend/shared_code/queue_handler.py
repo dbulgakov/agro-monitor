@@ -23,10 +23,10 @@ from shared_code.schemas import JobStatus, StartAnalysisPayload, ReportData
 
 executor = ThreadPoolExecutor(max_workers=3)
 
-BLANK_SHAPE = (128, 128)
+BLANK_SHAPE = (512, 512)
 MIN_PIX = 10
 MAX_SCENES = 5
-DEFAULT_DOWNSAMPLE = 4
+DEFAULT_DOWNSAMPLE = 1
 
 def _blank_gray():
     return np.zeros(BLANK_SHAPE, dtype=np.float32)
