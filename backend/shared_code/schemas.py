@@ -115,6 +115,7 @@ class ProgressUpdate(BaseModel):
     progress: int = Field(..., ge=-1, le=100)
     message: Optional[str] = None
     timestamp: float
+    raw: Optional[str] = None
 
 class JobStatusData(BaseModel):
     status: JobStatus

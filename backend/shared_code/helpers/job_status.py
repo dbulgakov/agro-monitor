@@ -29,6 +29,7 @@ def update_job_status(client: BlobServiceClient, job_id: str, status: JobStatus,
             progress=progress,
             timestamp=time.time(),
             message=message,
+            raw=raw
         )
         content = update.model_dump_json(exclude_none=True)
         blob_client.upload_blob(content.encode('utf-8'), overwrite=True)
