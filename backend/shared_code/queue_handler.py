@@ -341,7 +341,7 @@ def process_analysis(msg: func.QueueMessage):
     update_job_status(client, jid, JobStatus.PROCESSING, 90, "Підготовка рекомендацій", raw=json.dumps(metadata))
     recs = "Рекомендації не вдалося згенерувати."
     try:
-        recs = generate_openai_recommendations(jid, ndvi, stress_layer, payload.crop_type)
+        recs = generate_openai_recommendations(metadata, payload, ndvi, stress_layer)
         metadata["recommendationGenerated"] = True
         metadata["recommendationLength"] = len(recs) if isinstance(recs, str) else 0
         time.sleep(5)
