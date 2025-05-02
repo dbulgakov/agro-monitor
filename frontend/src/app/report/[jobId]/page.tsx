@@ -81,10 +81,10 @@ export default function ReportPage() {
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Параметри аналізу</h2> {/* text-lg, text-gray-800 */}
         <table className="w-full text-sm text-left text-gray-600">
           <tbody>
-            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">Тип культури:</td><td className="py-2">{data.parameters?.crop_type || 'N/A'}</td></tr>
-            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">NDVI-поріг:</td><td className="py-2">{data.parameters?.ndvi_threshold ?? 'N/A'}</td></tr>
-            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">Хмарність:</td><td className="py-2">≤ {data.parameters?.max_cloud_cover ?? 'N/A'}%</td></tr>
-            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">Дата знімку:</td><td className="py-2">{data.parameters?.snapshotDate || 'N/A'}</td></tr>
+            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">Тип культури:</td><td className="py-2">{data.requestPayload?.crop_type || 'N/A'}</td></tr>
+            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">NDVI-поріг:</td><td className="py-2">{data.requestPayload?.ndvi_threshold ?? 'N/A'}</td></tr>
+            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">Хмарність:</td><td className="py-2">≤ {data.requestPayload?.max_cloud_cover ?? 'N/A'}%</td></tr>
+            <tr className="odd:bg-gray-50"><td className="py-2 pr-3 font-medium">Дата знімку:</td><td className="py-2">{formatDateRange(data.requestPayload?.date_range) || 'N/A'}</td></tr>
           </tbody>
         </table>
       </div>
@@ -99,7 +99,7 @@ export default function ReportPage() {
            </div>
             <div className="text-center p-4 border rounded-md">
              <p className="text-sm text-gray-500 mb-1">Виявлено стрес-зон</p>
-             <p className="text-xl font-bold text-orange-600">{data.stressPercentage?.toFixed(1) ?? 'N/A'}%</p> {/* text-xl, text-orange-600 */} 
+             <p className="text-xl font-bold text-orange-600">{data.ndviStatistics?.stress_percentage?.toFixed(1) ?? 'N/A'}%</p> {/* text-xl, text-orange-600 */} 
            </div>
         </div>
       </div>
@@ -111,8 +111,8 @@ export default function ReportPage() {
           {/* Original Snapshot */}
           <div>
             <h3 className="text-base font-medium text-gray-700 mb-2">Оригінальне зображення (RGB)</h3> {/* text-base, text-gray-700 */} 
-            {data.snapshotImageUrl ? (
-              <img src={data.snapshotImageUrl} alt="Супутниковий знімок RGB" className="w-full h-auto rounded border bg-gray-100 aspect-square object-cover shadow-sm"/>
+            {data.mapUrls?.rgb ? (
+              <img src={data.mapUrls.rgb} alt="Супутниковий знімок RGB" className="w-full h-auto rounded border bg-gray-100 aspect-square object-cover shadow-sm"/>
             ) : (
               <div className="w-full h-40 rounded border bg-gray-100 flex items-center justify-center text-gray-400 flex-col text-xs shadow-sm">
                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-10 h-10 mb-2">
@@ -126,8 +126,8 @@ export default function ReportPage() {
           {/* NDVI Map */}
           <div>
             <h3 className="text-base font-medium text-gray-700 mb-2">NDVI-карта</h3> {/* text-base, text-gray-700 */} 
-            {data.ndviImageUrl ? (
-              <img src={data.ndviImageUrl} alt="NDVI карта" className="w-full h-auto rounded border bg-gray-100 aspect-square object-cover shadow-sm"/>
+            {data.mapUrls?.ndvi ? (
+              <img src={data.mapUrls.ndvi} alt="NDVI карта" className="w-full h-auto rounded border bg-gray-100 aspect-square object-cover shadow-sm"/>
             ) : (
                <div className="w-full h-40 rounded border bg-gray-100 flex items-center justify-center text-gray-400 flex-col text-xs shadow-sm">
                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-10 h-10 mb-2">
@@ -141,8 +141,8 @@ export default function ReportPage() {
           {/* Stress Zone Map */}
           <div>
             <h3 className="text-base font-medium text-gray-700 mb-2">Карта стрес-зон</h3> {/* text-base, text-gray-700 */} 
-            {data.stressZoneImageUrl ? (
-              <img src={data.stressZoneImageUrl} alt="Карта стрес-зон" className="w-full h-auto rounded border bg-gray-100 aspect-square object-cover shadow-sm"/>
+            {data.mapUrls?.stress ? (
+              <img src={data.mapUrls.stress} alt="Карта стрес-зон" className="w-full h-auto rounded border bg-gray-100 aspect-square object-cover shadow-sm"/>
             ) : (
               <div className="w-full h-40 rounded border bg-gray-100 flex items-center justify-center text-gray-400 flex-col text-xs shadow-sm">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-10 h-10 mb-2">
@@ -151,7 +151,7 @@ export default function ReportPage() {
                  Зображення недоступне
               </div>
             )}
-            <p className="text-xs text-gray-600 mt-2">(NDVI &lt; {data.parameters?.ndvi_threshold ?? 'N/A'})</p> {/* text-gray-600, mt-2 */} 
+            <p className="text-xs text-gray-600 mt-2">(NDVI &lt; {data.requestPayload?.ndvi_threshold ?? 'N/A'})</p> {/* text-gray-600, mt-2 */} 
           </div>
         </div>
       </div>
@@ -160,7 +160,7 @@ export default function ReportPage() {
       <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200 mb-6"> {/* p-6, mb-6 */} 
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Текстовий звіт</h2> {/* text-lg, text-gray-800 */}
         <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
-          {data.summary || "Резюме недоступне."}
+          {data.recommendations || "Резюме недоступне."}
         </p>
       </div>
 
