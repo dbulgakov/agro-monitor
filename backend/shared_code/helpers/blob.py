@@ -2,8 +2,8 @@ import os
 import io
 import logging
 from typing import Optional
-from azure.storage.blob.aio import BlobServiceClient
-from azure.storage.blob import ContentSettings
+from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
+from azure.storage.blob import BlobServiceClient, ContentSettings
 
 from ..schemas import ReportData
 
@@ -13,7 +13,7 @@ REPORTS_CONTAINER_NAME = os.getenv("REPORTS_CONTAINER_NAME", "reports")
 
 
 async def upload_image_to_blob(
-    client: BlobServiceClient,
+    client: AsyncBlobServiceClient,
     job_id: str,
     image_buffer: io.BytesIO,
     image_name: str
@@ -37,7 +37,7 @@ async def upload_image_to_blob(
 
 
 async def upload_report_to_blob(
-    client: BlobServiceClient,
+    client: AsyncBlobServiceClient,
     job_id: str,
     report_data: ReportData
 ):
@@ -57,7 +57,12 @@ async def upload_report_to_blob(
         raise
 
 
-def get_async_blob_service_client() -> BlobServiceClient:
+def get_async_blob_service_client() -> AsyncBlobServiceClient:
+    if not AZURE_STORAGE_CONNECTION_STRING:
+        raise ValueError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set")
+    return AsyncBlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+
+def get_sync_blob_service_client() -> BlobServiceClient:
     if not AZURE_STORAGE_CONNECTION_STRING:
         raise ValueError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set")
     return BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)

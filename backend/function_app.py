@@ -5,14 +5,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
-from azure.storage.queue.aio import QueueServiceClient as AsyncQueueServiceClient
+from azure.storage.blob import BlobServiceClient
+from azure.storage.queue import QueueServiceClient
 
 from routers.analysis import router as analysis_router
 from routers.report import router as report_router
 from routers.progress import router as progress_router
 from shared_code.queue_handler import process_analysis
-from shared_code.helpers.blob import get_async_blob_service_client
+from shared_code.helpers.blob import get_sync_blob_service_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,11 +22,15 @@ async def lifespan(app: FastAPI):
     conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not conn_str:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING must be set")
-    app.state.blob_service_client = AsyncBlobServiceClient.from_connection_string(conn_str)
-    app.state.queue_service_client = AsyncQueueServiceClient.from_connection_string(conn_str)
-    yield
-    await app.state.blob_service_client.close()
-    await app.state.queue_service_client.close()
+    blob_client = BlobServiceClient.from_connection_string(conn_str)
+    queue_client = QueueServiceClient.from_connection_string(conn_str)
+    app.state.blob_service_client = blob_client
+    app.state.queue_service_client = queue_client
+    logger.info("Lifespan startup: Sync clients initialized.")
+    try:
+        yield
+    finally:
+        logger.info("Lifespan shutdown.")
 
 fastapi_app = FastAPI(
     title="Agro Monitor Backend API",
@@ -74,15 +78,16 @@ app = func.AsgiFunctionApp(app=fastapi_app, http_auth_level=func.AuthLevel.ANONY
     queue_name="%ANALYSIS_QUEUE_NAME%",
     connection="AZURE_STORAGE_CONNECTION_STRING",
 )
-async def process_analysis_job(msg: func.QueueMessage):
+def process_analysis_job(msg: func.QueueMessage):
     logger.info(f"Processing message: {msg.id}")
     try:
         content = msg.get_body().decode('utf-8')
         logger.info(f"Message content: {content}")
         
-        client = get_async_blob_service_client()
-        async with client:
-            await process_analysis(msg, client)
+        client = get_sync_blob_service_client()
+
+        process_analysis(msg, client)
+
     except Exception as e:
         logger.error(f"Error processing message {msg.id}: {str(e)}", exc_info=True)
         raise
