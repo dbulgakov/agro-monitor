@@ -11,6 +11,7 @@ import hashlib
 config = pulumi.Config()
 location = config.require("location")
 repo_token = config.get_secret("repoToken")
+openai_api_key = config.get_secret("openaiApiKey")
 
 project, stack = pulumi.get_project(), pulumi.get_stack()
 
@@ -93,6 +94,7 @@ app_settings = [
     web.NameValuePairArgs(name="AZURE_STORAGE_CONNECTION_STRING", value=connection_string),
     web.NameValuePairArgs(name="APPINSIGHTS_INSTRUMENTATIONKEY", value=app_insights.instrumentation_key),
     web.NameValuePairArgs(name="APPLICATIONINSIGHTS_CONNECTION_STRING", value=app_insights.connection_string),
+    web.NameValuePairArgs(name="OPENAI_API_KEY", value=openai_api_key),
 ]
 
 func_app = web.WebApp(
