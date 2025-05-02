@@ -74,9 +74,18 @@ function generateMockReport(jobId: string): ReportData {
     };
 }
 
-export async function GET(request: Request, context: { params: { jobId: string } }) {
-    // Access jobId directly from context.params
-    const jobId = context.params.jobId; 
+// Define the type for route parameters, wrapping params in a Promise
+type RouteParams = {
+  params: Promise<{ // Wrap params in Promise
+    jobId: string;
+  }>
+}
+
+// Update the function signature to accept the props object
+export async function GET(request: Request, props: RouteParams) {
+    // Await the params object before accessing jobId
+    const params = await props.params;
+    const jobId = params.jobId; 
 
     // Remove logging for params object as we are using context now
     // console.log("[Mock Report API] Received params object:", params);
