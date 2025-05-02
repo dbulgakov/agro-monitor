@@ -7,7 +7,7 @@ import dynamic from 'next/dynamic'; // Import dynamic
 import CropTypeSelect from '@/components/CropTypeSelect';
 import FrequencySelect from '@/components/FrequencySelect';
 import ProgressBar from '@/components/ProgressBar'; // Import ProgressBar
-import { startAnalysis, CropType, AnalysisFrequency, AnalysisParameters, JobProgress } from '@/lib/api';
+import { startAnalysis, CropType, AnalysisFrequency, AnalysisParameters, JobProgress, API_BASE_URL } from '@/lib/api';
 import DatePicker, { registerLocale } from "react-datepicker";
 import { uk } from 'date-fns/locale/uk'; // Corrected import
 import "react-datepicker/dist/react-datepicker.css";
@@ -199,7 +199,7 @@ export default function HomePage() {
       const pollProgress = async () => {
         console.log(`[Polling ${currentJobId}] Fetching progress...`);
         try {
-          const res = await fetch(`/api/progress/${currentJobId}`);
+          const res = await fetch(`${API_BASE_URL}/api/progress/${currentJobId}`);
           if (!res.ok) {
             const errorData = await res.json().catch(() => ({ detail: res.statusText }));
             throw new Error(errorData.detail || `HTTP error! status: ${res.status}`);
