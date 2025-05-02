@@ -114,6 +114,17 @@ queue_role_assignment = authorization.RoleAssignment(
     scope=sa.id,
 )
 
+# Assign Storage Blob Data Contributor role to the function app identity
+storage_blob_data_contributor_role_id = f"/subscriptions/{current_config.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+
+blob_role_assignment = authorization.RoleAssignment(
+    "funcBlobRoleAssignment", # New resource name
+    principal_id=func_app.identity.principal_id,
+    principal_type=authorization.PrincipalType.SERVICE_PRINCIPAL,
+    role_definition_id=storage_blob_data_contributor_role_id, # Use the blob role ID
+    scope=sa.id, # Scope to the storage account
+)
+
 backend_api_url = func_app.default_host_name.apply(lambda h: f"https://{h}")
 
 front_plan = web.AppServicePlan(

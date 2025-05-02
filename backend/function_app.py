@@ -84,9 +84,7 @@ def process_analysis_job(msg: func.QueueMessage):
         content = msg.get_body().decode('utf-8')
         logger.info(f"Message content: {content}")
         
-        client = get_sync_blob_service_client()
-
-        process_analysis(msg, client)
+        process_analysis(msg)
 
     except Exception as e:
         logger.error(f"Error processing message {msg.id}: {str(e)}", exc_info=True)

@@ -10,8 +10,11 @@ openai_client = None
 
 if OPENAI_API_KEY:
     try:
-        openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        logging.info("Initialized OpenAI client.")
+        openai_client = openai.OpenAI(
+            api_key=OPENAI_API_KEY,
+            timeout=60.0, # Total request timeout
+        )
+        logging.info("Initialized OpenAI client with timeouts.")
     except Exception as e:
         logging.error(f"OpenAI init failed: {e}", exc_info=True)
 else:

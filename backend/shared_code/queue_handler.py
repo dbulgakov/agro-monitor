@@ -10,6 +10,7 @@ from PIL import Image
 import azure.functions as func
 import rasterio
 from rasterio.windows import from_bounds
+from rasterio.env import Env
 from azure.storage.blob import ContentSettings
 
 from shared_code.helpers.blob import get_sync_blob_service_client, IMAGES_CONTAINER_NAME, REPORTS_CONTAINER_NAME
@@ -71,9 +72,11 @@ def read_band_windowed(href: str, bounds_geojson: dict, band_index: int = 1) -> 
     ys = [pt[1] for pt in coords]
     minx, maxx = min(xs), max(xs)
     miny, maxy = min(ys), max(ys)
-    with rasterio.open(href) as src:
-        window = from_bounds(minx, miny, maxx, maxy, transform=src.transform)
-        return src.read(band_index, window=window)
+    # Set GDAL HTTP timeout using rasterio.Env
+    with Env(GDAL_HTTP_TIMEOUT=60):
+        with rasterio.open(href) as src:
+            window = from_bounds(minx, miny, maxx, maxy, transform=src.transform)
+            return src.read(band_index, window=window)
 
 
 def read_and_downsample(href: str, bounds_geojson: dict, downsample: int) -> np.ndarray:
@@ -147,6 +150,7 @@ def process_analysis(msg: func.QueueMessage):
     if not info:
         return
     job_id = info["job_id"]
+    # Obtain client here
     client = get_sync_blob_service_client()
     # Validate payload
     try:
@@ -157,33 +161,54 @@ def process_analysis(msg: func.QueueMessage):
     # Avoid re-processing
     status_data = get_job_status(client, job_id)
     if status_data and status_data.status in {JobStatus.PROCESSING, JobStatus.COMPLETED}:
+        logging.info(f"Skipping already processed job {job_id} with status {status_data.status}")
         return
     # Start analysis
-    update_job_status(client, job_id, JobStatus.PROCESSING, 0, "Start")
+    update_job_status(client, job_id, JobStatus.PROCESSING, 0, "Starting analysis")
     try:
         # 1) Fetch URLs
+        update_job_status(client, job_id, JobStatus.PROCESSING, 10, "Fetching band URLs from STAC")
         urls = fetch_band_urls(client, job_id, payload)
+        update_job_status(client, job_id, JobStatus.PROCESSING, 20, "Band URLs fetched")
+        
         # 2) Read + downsample
         bounds = payload.area.geometry.model_dump()
+        update_job_status(client, job_id, JobStatus.PROCESSING, 30, "Reading NIR band")
         nir = read_and_downsample(urls["nir"], bounds, downsample=4)
+        update_job_status(client, job_id, JobStatus.PROCESSING, 40, "Reading RED band")
         red = read_and_downsample(urls["red"], bounds, downsample=4)
+        
+        update_job_status(client, job_id, JobStatus.PROCESSING, 50, "Calculating NDVI")
         ndvi = compute_ndvi(nir, red)
+        update_job_status(client, job_id, JobStatus.PROCESSING, 55, "NDVI calculated")
+
         rgb_arr = None
+        rgb_url = None
         if urls.get("visual"):
+            update_job_status(client, job_id, JobStatus.PROCESSING, 60, "Reading VISUAL band")
             rgb_arr = read_and_downsample(urls["visual"], bounds, downsample=4)
+            update_job_status(client, job_id, JobStatus.PROCESSING, 65, "Visual band read")
+
         # 3) Render + upload
+        update_job_status(client, job_id, JobStatus.PROCESSING, 70, "Rendering and uploading NDVI map")
         ndvi_buf = render_ndvi_png(ndvi)
         ndvi_url = upload_png_buffer(client, job_id, ndvi_buf, "ndvi_map.png")
-        rgb_url = None
+        update_job_status(client, job_id, JobStatus.PROCESSING, 75, "NDVI map uploaded")
+        
         if rgb_arr is not None:
+            update_job_status(client, job_id, JobStatus.PROCESSING, 80, "Rendering and uploading RGB map")
             rgb_buf = render_rgb_png(rgb_arr)
             rgb_url = upload_png_buffer(client, job_id, rgb_buf, "rgb_map.png")
+            update_job_status(client, job_id, JobStatus.PROCESSING, 85, "RGB map uploaded")
+
         # 4) Recommendations
-        update_job_status(client, job_id, JobStatus.PROCESSING, 80, "Generating recommendations")
+        update_job_status(client, job_id, JobStatus.PROCESSING, 90, "Generating recommendations")
         thresh = getattr(payload, "ndvi_threshold", 0.3)
         mask = np.isfinite(ndvi)
         stress = (ndvi < thresh) & mask
         recs = generate_openai_recommendations(job_id, ndvi, stress, payload.crop_type)
+        update_job_status(client, job_id, JobStatus.PROCESSING, 95, "Recommendations generated")
+
         # 5) Stats
         valid = ndvi[mask]
         if valid.size > 0:
@@ -198,6 +223,7 @@ def process_analysis(msg: func.QueueMessage):
             }
         else:
             stats = {"mean": None, "min": None, "max": None, "std_dev": None, "stress_percentage": 0.0}
+        
         # 6) Save report
         report = ReportData(
             jobId=job_id,
@@ -205,7 +231,7 @@ def process_analysis(msg: func.QueueMessage):
             requestPayload=payload.model_dump(exclude_none=True),
             reportTimestamp=datetime.now(timezone.utc).isoformat(),
             ndviStatistics=stats,
-            mapUrls={"ndvi": ndvi_url, "rgb": rgb_url},
+            mapUrls={"ndvi": ndvi_url, "rgb": rgb_url}, # Updated to include potential None for rgb_url
             recommendations=recs,
         )
         report_blob = client.get_blob_client(
@@ -218,28 +244,29 @@ def process_analysis(msg: func.QueueMessage):
     except Exception as e:
         error_message = str(e)
         logging.error(f"Error processing job {job_id}: {error_message}", exc_info=True)
-        update_job_status(client, job_id, JobStatus.FAILED, -1, error_message)
+        # Ensure status is updated even on failure
+        update_job_status(client, job_id, JobStatus.FAILED, -1, f"Failed: {error_message[:100]}") # Truncate long errors
 
         # Attempt to save a failure report
         try:
-            # Re-validate payload if possible, or use the initial one
-            # We might not have the validated 'payload' object here if validation failed earlier
             request_payload_dict = info.get("payload", {})
-            # Create a partial report indicating failure
             failure_report = ReportData(
                 jobId=job_id,
                 status=JobStatus.FAILED,
-                requestPayload=request_payload_dict, # Use original payload
+                requestPayload=request_payload_dict,
                 reportTimestamp=datetime.now(timezone.utc).isoformat(),
-                ndviStatistics={}, # No stats available
-                mapUrls={}, # No maps available
-                recommendations=f"Analysis failed: {error_message}", # Put error in recommendations
+                ndviStatistics={},
+                mapUrls={}, 
+                recommendations=f"Analysis failed: {error_message}",
             )
             report_blob = client.get_blob_client(
                 container=REPORTS_CONTAINER_NAME, blob=f"{job_id}/report.json"
             )
+            # Use model_dump_json for consistency and exclude_none
             report_blob.upload_blob(
-                failure_report.model_dump_json(exclude_none=True).encode("utf-8"), overwrite=True
+                failure_report.model_dump_json(exclude_none=True).encode("utf-8"), 
+                overwrite=True,
+                content_settings=ContentSettings(content_type="application/json") # Add content type
             )
             logging.info(f"Failure report saved for job {job_id}")
         except Exception as report_e:

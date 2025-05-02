@@ -64,4 +64,8 @@ async def upload_report_to_blob(
 
 
 def get_sync_blob_service_client() -> BlobServiceClient:
-    return BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+    return BlobServiceClient.from_connection_string(
+        AZURE_STORAGE_CONNECTION_STRING, 
+        connection_timeout=60, 
+        read_timeout=60
+    )
